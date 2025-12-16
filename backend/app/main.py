@@ -38,8 +38,9 @@ async def lifespan(app: FastAPI):
     # Auto-start bot if trading is enabled
     if settings.TRADING_ENABLED:
         try:
-            from engine.trading_bot import bot_state, BotCommand
-            bot_state.start()
+            from api.v1.endpoints.bot import bot_state
+            from schemas.bot import BotState
+            bot_state["state"] = BotState.RUNNING
             logger.info("Trading bot auto-started (TRADING_ENABLED=true)")
         except Exception as e:
             logger.error(f"Failed to auto-start bot: {e}")
