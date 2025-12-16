@@ -4,7 +4,7 @@ Combines all endpoint routers
 """
 from fastapi import APIRouter
 
-from .v1.endpoints import auth, health, trades, positions, bot, chat, ai
+from .v1.endpoints import auth, health, trades, positions, bot, chat, ai, prices
 
 api_router = APIRouter()
 
@@ -51,3 +51,8 @@ api_router.include_router(
     tags=["AI Models"]
 )
 
+api_router.include_router(
+    prices.router,
+    prefix="/prices",
+    tags=["Prices"]
+)
