@@ -121,3 +121,14 @@ async def update_fcm_token(
     user_repo = UserRepository(db)
     await user_repo.update_fcm_token(current_user.id, fcm_token)
     return {"message": "FCM token updated"}
+
+
+@router.post("/enable-trading")
+async def enable_trading(
+    current_user: CurrentUser,
+    db: DbSession
+):
+    """Enable trading for current user (for paper trading setup)"""
+    user_repo = UserRepository(db)
+    await user_repo.update(current_user.id, trading_enabled=True)
+    return {"message": "Trading enabled", "trading_enabled": True}
