@@ -71,11 +71,11 @@ async def get_ohlcv(
     """
     coin_id = get_coin_id(symbol)
     
-    # Map timeframe to CoinGecko days parameter
+    # CoinGecko OHLC only accepts: 1, 7, 14, 30, 90, 180, 365
     days_map = {
-        "1h": 4,      # 4 days for hourly data
-        "4h": 14,     # 14 days for 4h data
-        "1d": limit,  # direct days for daily
+        "1h": 1,       # 1 day for hourly data
+        "4h": 7,       # 7 days for 4h data
+        "1d": 30,      # 30 days for daily
     }
     days = days_map.get(timeframe, 7)
     
