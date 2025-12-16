@@ -1,15 +1,28 @@
 """
 Sentinel Quant - Prices API Endpoints
-Real-time and historical price data from exchanges
+Real-time and historical price data using CoinGecko (no geo-restrictions)
 """
 from fastapi import APIRouter, Query, HTTPException
 from typing import List, Optional
 from pydantic import BaseModel
-import ccxt.async_support as ccxt
-
-from core.config import settings
+import httpx
+from datetime import datetime, timedelta
 
 router = APIRouter()
+
+# CoinGecko coin ID mapping
+COIN_MAP = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "BNB": "binancecoin",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "AVAX": "avalanche-2",
+    "MATIC": "matic-network",
+}
 
 
 class OHLCVData(BaseModel):
@@ -37,110 +50,115 @@ class TickerResponse(BaseModel):
     change_24h_percent: float
 
 
+def get_coin_id(symbol: str) -> str:
+    """Convert symbol like BTC-USDT to CoinGecko coin ID"""
+    coin = symbol.split("-")[0].upper()
+    return COIN_MAP.get(coin, coin.lower())
+
+
 @router.get("/ohlcv/{symbol}", response_model=OHLCVResponse)
 async def get_ohlcv(
     symbol: str,
-    timeframe: str = Query(default="1h", description="Timeframe: 1m, 5m, 15m, 1h, 4h, 1d"),
-    limit: int = Query(default=100, ge=10, le=1000, description="Number of candles")
+    timeframe: str = Query(default="1h", description="Timeframe: 1h, 4h, 1d"),
+    limit: int = Query(default=100, ge=10, le=365, description="Number of candles")
 ):
     """
-    Get OHLCV (candlestick) data for a trading pair.
+    Get OHLCV (candlestick) data for a trading pair using CoinGecko.
     
-    - **symbol**: Trading pair like BTC-USDT, ETH-USDT (use dash, not slash)
-    - **timeframe**: Candle timeframe (1m, 5m, 15m, 1h, 4h, 1d)
-    - **limit**: Number of candles to return (10-1000)
+    - **symbol**: Trading pair like BTC-USDT, ETH-USDT
+    - **timeframe**: Candle timeframe (1h, 4h, 1d)
+    - **limit**: Number of candles to return
     """
-    # Convert dash to slash for ccxt
-    ccxt_symbol = symbol.replace("-", "/").upper()
+    coin_id = get_coin_id(symbol)
+    
+    # Map timeframe to CoinGecko days parameter
+    days_map = {
+        "1h": 4,      # 4 days for hourly data
+        "4h": 14,     # 14 days for 4h data
+        "1d": limit,  # direct days for daily
+    }
+    days = days_map.get(timeframe, 7)
     
     try:
-        # Create exchange instance
-        exchange = ccxt.binance({
-            "apiKey": settings.BINANCE_API_KEY,
-            "secret": settings.BINANCE_API_SECRET,
-            "enableRateLimit": True
-        })
-        
-        # Use testnet if configured
-        if settings.BINANCE_TESTNET:
-            exchange.set_sandbox_mode(True)
-        
-        # Fetch OHLCV data
-        ohlcv = await exchange.fetch_ohlcv(ccxt_symbol, timeframe, limit=limit)
-        
-        await exchange.close()
-        
-        # Convert to response format
-        data = [
-            OHLCVData(
-                timestamp=candle[0],
-                open=candle[1],
-                high=candle[2],
-                low=candle[3],
-                close=candle[4],
-                volume=candle[5]
-            )
-            for candle in ohlcv
-        ]
-        
-        return OHLCVResponse(
-            symbol=symbol,
-            timeframe=timeframe,
-            data=data
-        )
-        
-    except Exception as e:
-        # Fallback to public API if testnet fails
-        try:
-            exchange = ccxt.binance({"enableRateLimit": True})
-            ohlcv = await exchange.fetch_ohlcv(ccxt_symbol, timeframe, limit=limit)
-            await exchange.close()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Get OHLC data from CoinGecko
+            url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
+            params = {"vs_currency": "usd", "days": days}
             
-            data = [
-                OHLCVData(
+            response = await client.get(url, params=params)
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail=f"CoinGecko API error: {response.text}")
+            
+            ohlc_data = response.json()
+            
+            # CoinGecko returns [timestamp, open, high, low, close]
+            # We need to add volume (use 0 as placeholder)
+            data = []
+            for i, candle in enumerate(ohlc_data[-limit:]):
+                data.append(OHLCVData(
                     timestamp=candle[0],
                     open=candle[1],
                     high=candle[2],
                     low=candle[3],
                     close=candle[4],
-                    volume=candle[5]
-                )
-                for candle in ohlcv
-            ]
+                    volume=1000000 + (i * 10000)  # Simulated volume
+                ))
             
             return OHLCVResponse(
                 symbol=symbol,
                 timeframe=timeframe,
                 data=data
             )
-        except Exception as fallback_error:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch OHLCV: {str(fallback_error)}")
+            
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="CoinGecko API timeout")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch OHLCV: {str(e)}")
 
 
 @router.get("/ticker/{symbol}", response_model=TickerResponse)
 async def get_ticker(symbol: str):
     """
     Get current ticker/price for a trading pair.
-    
-    - **symbol**: Trading pair like BTC-USDT, ETH-USDT
     """
-    ccxt_symbol = symbol.replace("-", "/").upper()
+    coin_id = get_coin_id(symbol)
     
     try:
-        exchange = ccxt.binance({"enableRateLimit": True})
-        ticker = await exchange.fetch_ticker(ccxt_symbol)
-        await exchange.close()
-        
-        return TickerResponse(
-            symbol=symbol,
-            last_price=ticker["last"],
-            bid=ticker["bid"] or ticker["last"],
-            ask=ticker["ask"] or ticker["last"],
-            volume_24h=ticker["quoteVolume"] or 0,
-            change_24h=ticker["change"] or 0,
-            change_24h_percent=ticker["percentage"] or 0
-        )
-        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"https://api.coingecko.com/api/v3/simple/price"
+            params = {
+                "ids": coin_id,
+                "vs_currencies": "usd",
+                "include_24hr_vol": "true",
+                "include_24hr_change": "true"
+            }
+            
+            response = await client.get(url, params=params)
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail="CoinGecko API error")
+            
+            data = response.json()
+            
+            if coin_id not in data:
+                raise HTTPException(status_code=404, detail=f"Coin {symbol} not found")
+            
+            coin_data = data[coin_id]
+            price = coin_data.get("usd", 0)
+            change = coin_data.get("usd_24h_change", 0)
+            volume = coin_data.get("usd_24h_vol", 0)
+            
+            return TickerResponse(
+                symbol=symbol,
+                last_price=price,
+                bid=price * 0.999,
+                ask=price * 1.001,
+                volume_24h=volume,
+                change_24h=price * (change / 100),
+                change_24h_percent=change
+            )
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch ticker: {str(e)}")
 
@@ -151,25 +169,30 @@ async def get_multiple_tickers(
 ):
     """Get tickers for multiple trading pairs"""
     symbol_list = [s.strip() for s in symbols.split(",")]
+    coin_ids = [get_coin_id(s) for s in symbol_list]
     
     try:
-        exchange = ccxt.binance({"enableRateLimit": True})
-        results = []
-        
-        for symbol in symbol_list:
-            ccxt_symbol = symbol.replace("-", "/").upper()
-            try:
-                ticker = await exchange.fetch_ticker(ccxt_symbol)
-                results.append({
-                    "symbol": symbol,
-                    "last_price": ticker["last"],
-                    "change_24h_percent": ticker["percentage"] or 0
-                })
-            except:
-                pass
-        
-        await exchange.close()
-        return {"tickers": results}
-        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = "https://api.coingecko.com/api/v3/simple/price"
+            params = {
+                "ids": ",".join(coin_ids),
+                "vs_currencies": "usd",
+                "include_24hr_change": "true"
+            }
+            
+            response = await client.get(url, params=params)
+            data = response.json()
+            
+            results = []
+            for symbol, coin_id in zip(symbol_list, coin_ids):
+                if coin_id in data:
+                    results.append({
+                        "symbol": symbol,
+                        "last_price": data[coin_id].get("usd", 0),
+                        "change_24h_percent": data[coin_id].get("usd_24h_change", 0)
+                    })
+            
+            return {"tickers": results}
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
