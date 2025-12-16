@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     MAX_DAILY_LOSS_PERCENT: float = Field(default=5.0)
     CONFIDENCE_THRESHOLD: float = Field(default=0.85)  # 85% minimum
     
+    # Validators to handle whitespace in boolean values
+    @field_validator('BINANCE_TESTNET', 'TRADING_ENABLED', 'DEBUG', mode='before')
+    @classmethod
+    def parse_boolean(cls, v):
+        if isinstance(v, str):
+            v = v.strip().lower()
+            return v in ('true', '1', 'yes', 'on')
+        return bool(v)
+    
     # Dify (Sentiment Analysis)
     DIFY_API_URL: Optional[str] = Field(default=None)
     DIFY_API_KEY: Optional[str] = Field(default=None)
