@@ -1,4 +1,4 @@
-# Ignore files for Docker and Git
+# Docker ignore for Railway deployment
 __pycache__/
 *.pyc
 *.pyo
@@ -23,3 +23,5 @@ models/
 *.pt
 *.pth
 *.zip
+mobile-app/
+node_modules/
