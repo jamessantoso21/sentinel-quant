@@ -3,10 +3,11 @@ Sentinel Quant - Prices API Endpoints
 Real-time and historical price data using CoinGecko (no geo-restrictions)
 """
 from fastapi import APIRouter, Query, HTTPException
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 import httpx
 from datetime import datetime, timedelta
+import time
 
 router = APIRouter()
 
@@ -23,6 +24,24 @@ COIN_MAP = {
     "AVAX": "avalanche-2",
     "MATIC": "matic-network",
 }
+
+# Simple cache to avoid rate limits (CoinGecko: 10-30 req/min on free tier)
+_cache: Dict[str, Any] = {}
+_cache_ttl = 60  # Cache for 60 seconds
+
+
+def get_cached(key: str) -> Optional[Any]:
+    """Get cached data if not expired"""
+    if key in _cache:
+        data, timestamp = _cache[key]
+        if time.time() - timestamp < _cache_ttl:
+            return data
+    return None
+
+
+def set_cache(key: str, data: Any):
+    """Set cache with current timestamp"""
+    _cache[key] = (data, time.time())
 
 
 class OHLCVData(BaseModel):
@@ -70,6 +89,12 @@ async def get_ohlcv(
     - **limit**: Number of candles to return
     """
     coin_id = get_coin_id(symbol)
+    cache_key = f"ohlcv:{coin_id}:{timeframe}"
+    
+    # Check cache first
+    cached = get_cached(cache_key)
+    if cached:
+        return OHLCVResponse(symbol=symbol, timeframe=timeframe, data=cached)
     
     # CoinGecko OHLC only accepts: 1, 7, 14, 30, 90, 180, 365
     days_map = {
@@ -93,7 +118,6 @@ async def get_ohlcv(
             ohlc_data = response.json()
             
             # CoinGecko returns [timestamp, open, high, low, close]
-            # We need to add volume (use 0 as placeholder)
             data = []
             for i, candle in enumerate(ohlc_data[-limit:]):
                 data.append(OHLCVData(
@@ -102,8 +126,11 @@ async def get_ohlcv(
                     high=candle[2],
                     low=candle[3],
                     close=candle[4],
-                    volume=1000000 + (i * 10000)  # Simulated volume
+                    volume=1000000 + (i * 10000)
                 ))
+            
+            # Cache the result
+            set_cache(cache_key, data)
             
             return OHLCVResponse(
                 symbol=symbol,

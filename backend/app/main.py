@@ -35,6 +35,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
     
+    # Auto-start bot if trading is enabled
+    if settings.TRADING_ENABLED:
+        try:
+            from engine.trading_bot import bot_state, BotCommand
+            bot_state.start()
+            logger.info("Trading bot auto-started (TRADING_ENABLED=true)")
+        except Exception as e:
+            logger.error(f"Failed to auto-start bot: {e}")
+    
     yield
     
     # Shutdown
