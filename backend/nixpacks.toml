@@ -1,0 +1,12 @@
+[tool.nixpacks]
+buildPhase = ["pip install --upgrade pip", "pip install -r requirements.txt"]
+startPhase = ["uvicorn main:app --host 0.0.0.0 --port $PORT"]
+
+[phases.setup]
+nixPkgs = ["python311", "gcc", "postgresql.lib"]
+
+[phases.build]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"

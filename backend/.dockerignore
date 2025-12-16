@@ -1,0 +1,23 @@
+# Ignore files for Docker and Git
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.env.local
+*.egg-info/
+dist/
+build/
+.git/
+.gitignore
+*.md
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+models/
+*.pt
+*.pth

@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # 1. DATABASE: TimescaleDB (Time-series optimized PostgreSQL)
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    container_name: sentinel_db
+    restart: always
+    environment:
+      - POSTGRES_USER=sentinel
+      - POSTGRES_PASSWORD=sentinel_pass
+      - POSTGRES_DB=sentinel_quant
+    ports:
+      - "5432:5432"
+    volumes:
+      - sentinel_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U sentinel -d sentinel_quant" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. CACHE & BROKER: Redis
+  redis:
+    image: redis:alpine
+    container_name: sentinel_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 3. BACKEND: Python FastAPI
+  backend:
+    build: ./backend
+    container_name: sentinel_engine
+    restart: always
+    volumes:
+      - ./backend/app:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql://sentinel:sentinel_pass@timescaledb:5432/sentinel_quant
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # 4. CELERY WORKER: Background Tasks
+  celery_worker:
+    build: ./backend
+    container_name: sentinel_worker
+    restart: always
+    volumes:
+      - ./backend/app:/app
+    environment:
+      - DATABASE_URL=postgresql://sentinel:sentinel_pass@timescaledb:5432/sentinel_quant
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      - backend
+      - redis
+    command: celery -A workers.celery_app worker --loglevel=info
+
+  # 5. CELERY BEAT: Scheduled Tasks
+  celery_beat:
+    build: ./backend
+    container_name: sentinel_scheduler
+    restart: always
+    volumes:
+      - ./backend/app:/app
+    environment:
+      - DATABASE_URL=postgresql://sentinel:sentinel_pass@timescaledb:5432/sentinel_quant
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    depends_on:
+      - celery_worker
+    command: celery -A workers.celery_app beat --loglevel=info
+
+volumes:
+  sentinel_data:
+  redis_data:
