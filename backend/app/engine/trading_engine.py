@@ -117,7 +117,7 @@ class TradingEngine:
             # Market analysis text
             news_text = f"Current market conditions for {self.current_symbol}: The crypto market is showing mixed signals with Bitcoin consolidating near recent highs. Institutional interest remains strong with continued ETF inflows. Market sentiment appears cautiously optimistic with traders watching for the next major catalyst."
             
-            url = f"{settings.DIFY_API_URL}/chat-messages"
+            url = f"{settings.DIFY_API_URL}/chat-messages".strip()
             logger.info(f"Calling Dify API: {url}")
             
             async with httpx.AsyncClient(timeout=60.0) as client:
