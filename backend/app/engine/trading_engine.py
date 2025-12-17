@@ -227,14 +227,27 @@ class TradingEngine:
         }
     
     async def _get_sentiment(self) -> Optional[Dict]:
-        """Get market sentiment from Dify"""
+        """Get market sentiment from Dify using real news"""
         if not settings.DIFY_API_KEY or not settings.DIFY_API_URL:
             logger.warning(f"Dify not configured. API_KEY: {bool(settings.DIFY_API_KEY)}, API_URL: {bool(settings.DIFY_API_URL)}")
             return None
         
         try:
-            # Market analysis text
-            news_text = f"Current market conditions for {self.current_symbol}: The crypto market is showing mixed signals with Bitcoin consolidating near recent highs. Institutional interest remains strong with continued ETF inflows. Market sentiment appears cautiously optimistic with traders watching for the next major catalyst."
+            # Fetch real news from CryptoCompare
+            from engine.news_fetcher import news_fetcher
+            
+            # Extract symbol (BTC from BTC/USDT)
+            symbol = self.current_symbol.split("/")[0]
+            
+            news_items = await news_fetcher.fetch_news(symbol, limit=5)
+            news_text = news_fetcher.format_for_dify(news_items, symbol)
+            
+            if news_items:
+                logger.info(f"Fetched {len(news_items)} news articles for {symbol}")
+                # Log first headline
+                logger.info(f"Latest headline: {news_items[0].title[:80]}...")
+            else:
+                logger.warning("No news found, using fallback text")
             
             url = f"{settings.DIFY_API_URL}/chat-messages".strip()
             logger.info(f"Calling Dify API: {url}")
@@ -263,7 +276,6 @@ class TradingEngine:
                     
                     # Parse JSON from response
                     try:
-                        # Try to extract JSON from the answer
                         if "{" in answer and "}" in answer:
                             json_start = answer.index("{")
                             json_end = answer.rindex("}") + 1
