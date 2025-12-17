@@ -153,13 +153,27 @@ class TradingEngine:
         reasoning = voting_result.reasoning
         market_condition = f"VOTE_{voting_result.final_action}"
         
-        # Store in bot_state
+        # Store in bot_state with individual voter details
+        voters = []
+        for vote in voting_result.individual_votes:
+            voters.append({
+                "name": vote.voter_name,
+                "vote": vote.vote.value,
+                "confidence": vote.confidence,
+                "reasoning": vote.reasoning,
+                "active": vote.is_active
+            })
+        
         bot_state["voting_result"] = {
             "action": action,
             "consensus": voting_result.consensus_level,
             "active_voters": voting_result.active_voters,
+            "total_voters": voting_result.total_voters,
             "buy_votes": voting_result.buy_votes,
-            "sell_votes": voting_result.sell_votes
+            "sell_votes": voting_result.sell_votes,
+            "hold_votes": voting_result.hold_votes,
+            "should_trade": voting_result.should_trade,
+            "voters": voters
         }
         
         bot_state["last_signal"] = action

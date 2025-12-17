@@ -27,6 +27,7 @@ bot_state = {
     "last_signal": None,
     "current_confidence": None,
     "current_sentiment": None,
+    "voting_result": None,  # Voting details for UI
     "activity_log": []  # Store recent activity
 }
 
@@ -54,8 +55,22 @@ async def get_bot_activity(current_user: CurrentUser, limit: int = 20):
         "last_signal": bot_state.get("last_signal"),
         "current_confidence": bot_state.get("current_confidence"),
         "current_sentiment": bot_state.get("current_sentiment"),
+        "voting_result": bot_state.get("voting_result"),
         "activity_log": bot_state["activity_log"][:limit]
     }
+
+
+@router.get("/voting")
+async def get_voting_details(current_user: CurrentUser):
+    """Get current voting details from all voters"""
+    voting = bot_state.get("voting_result")
+    if not voting:
+        return {
+            "status": "no_data",
+            "message": "No voting data yet. Wait for next trading cycle."
+        }
+    return voting
+
 
 
 @router.get("/status", response_model=BotStatus)
