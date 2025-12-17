@@ -20,6 +20,11 @@ TRADING_SYMBOLS = [
     "PAXG/USDT",  # Pax Gold (Gold-backed token)
 ]
 
+# TP/SL Configuration (from backtest optimization)
+STOP_LOSS_PERCENT = 0.02    # 2% stop loss
+TAKE_PROFIT_PERCENT = 0.04  # 4% take profit
+POSITION_SIZE_PERCENT = 0.10  # 10% of capital per trade
+
 
 class TradingEngine:
     """Main trading engine that runs the trading loop"""
@@ -32,6 +37,9 @@ class TradingEngine:
         self.last_signal_time: Optional[datetime] = None
         self.last_sentiment: Optional[Dict] = None
         self.last_ai_prediction: Optional[float] = None
+        
+        # Position tracking for TP/SL
+        self.positions: Dict[str, Dict] = {}  # {symbol: {side, entry_price, entry_time}}
         
     async def start(self):
         """Start the trading loop"""
@@ -67,6 +75,14 @@ class TradingEngine:
         # Import activity logger
         from api.v1.endpoints.bot import add_activity, bot_state
         from engine.sentiment_tracker import sentiment_tracker
+        
+        # 0. Check existing positions for TP/SL
+        if self.current_symbol in self.positions:
+            current_price = await self._get_current_price(self.current_symbol)
+            if current_price:
+                result = await self._check_tp_sl(self.current_symbol, current_price)
+                if result:
+                    logger.info(f"{self.current_symbol} position closed via {result}")
         
         # 1. Get market sentiment from Dify
         sentiment = await self._get_sentiment()
@@ -181,15 +197,25 @@ class TradingEngine:
         
         # 4. Execute based on voting result
         if voting_result.should_trade and action in ["BUY", "SELL"]:
-            logger.info(f"Trade signal: {action} with consensus {confidence:.0%}")
-            
-            if settings.TRADING_ENABLED:
-                add_activity(
-                    f"TRADE_{action}",
-                    f"Voting: {voting_result.buy_votes}B/{voting_result.sell_votes}S/{voting_result.hold_votes}H | {reasoning}",
-                    traded=True
-                )
-                await self._execute_trade(action, confidence)
+            # Skip if already have position in this symbol
+            if self.current_symbol in self.positions:
+                logger.info(f"Already have {self.positions[self.current_symbol]['side']} position in {self.current_symbol}, skipping new entry")
+            else:
+                logger.info(f"Trade signal: {action} with consensus {confidence:.0%}")
+                
+                if settings.TRADING_ENABLED:
+                    add_activity(
+                        f"TRADE_{action}",
+                        f"Voting: {voting_result.buy_votes}B/{voting_result.sell_votes}S/{voting_result.hold_votes}H | {reasoning}",
+                        traded=True
+                    )
+                    
+                    # Get entry price and record position with TP/SL
+                    entry_price = await self._get_current_price(self.current_symbol)
+                    if entry_price:
+                        self._open_position(self.current_symbol, action, entry_price)
+                    
+                    await self._execute_trade(action, confidence)
             else:
                 add_activity(
                     "TRADE_SKIPPED",
@@ -445,6 +471,93 @@ class TradingEngine:
                 
         except Exception as e:
             logger.error(f"Trade execution failed: {e}")
+    
+    async def _check_tp_sl(self, symbol: str, current_price: float) -> Optional[str]:
+        """
+        Check if any open position should be closed due to TP or SL.
+        Returns: 'TP', 'SL', or None
+        """
+        from api.v1.endpoints.bot import add_activity
+        
+        if symbol not in self.positions:
+            return None
+        
+        position = self.positions[symbol]
+        entry_price = position['entry_price']
+        side = position['side']
+        
+        # Calculate P&L percentage
+        if side == 'BUY':
+            pnl_pct = (current_price - entry_price) / entry_price
+        else:  # SELL
+            pnl_pct = (entry_price - current_price) / entry_price
+        
+        # Check TP/SL
+        if pnl_pct <= -STOP_LOSS_PERCENT:
+            logger.info(f"STOP LOSS triggered for {symbol}: {pnl_pct*100:.2f}%")
+            add_activity(
+                "STOP_LOSS",
+                f"{symbol} closed at ${current_price:.2f} | Loss: {pnl_pct*100:.2f}%",
+                traded=True
+            )
+            del self.positions[symbol]
+            return 'SL'
+        
+        elif pnl_pct >= TAKE_PROFIT_PERCENT:
+            logger.info(f"TAKE PROFIT triggered for {symbol}: {pnl_pct*100:.2f}%")
+            add_activity(
+                "TAKE_PROFIT",
+                f"{symbol} closed at ${current_price:.2f} | Profit: {pnl_pct*100:.2f}%",
+                traded=True
+            )
+            del self.positions[symbol]
+            return 'TP'
+        
+        else:
+            logger.debug(f"Position {symbol}: P&L = {pnl_pct*100:.2f}% (TP: +{TAKE_PROFIT_PERCENT*100}%, SL: -{STOP_LOSS_PERCENT*100}%)")
+            return None
+    
+    def _open_position(self, symbol: str, side: str, entry_price: float):
+        """Record a new position"""
+        from api.v1.endpoints.bot import add_activity
+        
+        self.positions[symbol] = {
+            'side': side,
+            'entry_price': entry_price,
+            'entry_time': datetime.now(timezone.utc),
+            'tp_price': entry_price * (1 + TAKE_PROFIT_PERCENT) if side == 'BUY' else entry_price * (1 - TAKE_PROFIT_PERCENT),
+            'sl_price': entry_price * (1 - STOP_LOSS_PERCENT) if side == 'BUY' else entry_price * (1 + STOP_LOSS_PERCENT),
+        }
+        
+        pos = self.positions[symbol]
+        logger.info(f"Opened {side} position for {symbol} at ${entry_price:.2f} | TP: ${pos['tp_price']:.2f} | SL: ${pos['sl_price']:.2f}")
+        add_activity(
+            f"OPEN_{side}",
+            f"{symbol} at ${entry_price:.2f} | TP: ${pos['tp_price']:.2f} | SL: ${pos['sl_price']:.2f}",
+            traded=True
+        )
+    
+    async def _get_current_price(self, symbol: str) -> Optional[float]:
+        """Get current price from CoinGecko"""
+        try:
+            coin_map = {
+                "BTC/USDT": "bitcoin",
+                "PAXG/USDT": "pax-gold",
+                "ETH/USDT": "ethereum",
+            }
+            coin_id = coin_map.get(symbol, "bitcoin")
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"https://api.coingecko.com/api/v3/simple/price",
+                    params={"ids": coin_id, "vs_currencies": "usd"}
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get(coin_id, {}).get('usd')
+        except Exception as e:
+            logger.error(f"Failed to get current price for {symbol}: {e}")
+        return None
 
 
 # Global trading engine instance
