@@ -45,14 +45,18 @@ class TechnicalAnalyzer:
         """
         try:
             # Fetch recent price data
+            logger.info(f"Fetching price data for {symbol}")
             df = await self._fetch_price_data(symbol)
             if df is None or len(df) < 50:
-                logger.warning("Insufficient price data for analysis")
+                logger.warning(f"Insufficient price data for analysis: {len(df) if df is not None else 0} rows")
                 return None
+            
+            logger.info(f"Got {len(df)} price rows, computing indicators...")
             
             # Compute RSI
             rsi = self._compute_rsi(df['close'], 14)
-            rsi_value = rsi.iloc[-1]
+            rsi_value = float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+            logger.info(f"RSI computed: {rsi_value:.1f}")
             
             if rsi_value < self.rsi_oversold:
                 rsi_signal = "OVERSOLD"
