@@ -110,16 +110,19 @@ class TradingEngine:
     async def _get_sentiment(self) -> Optional[Dict]:
         """Get market sentiment from Dify"""
         if not settings.DIFY_API_KEY or not settings.DIFY_API_URL:
-            logger.warning("Dify not configured, skipping sentiment")
+            logger.warning(f"Dify not configured. API_KEY: {bool(settings.DIFY_API_KEY)}, API_URL: {bool(settings.DIFY_API_URL)}")
             return None
         
         try:
             # Market analysis text
             news_text = f"Current market conditions for {self.current_symbol}: The crypto market is showing mixed signals with Bitcoin consolidating near recent highs. Institutional interest remains strong with continued ETF inflows. Market sentiment appears cautiously optimistic with traders watching for the next major catalyst."
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{settings.DIFY_API_URL}/chat-messages"
+            logger.info(f"Calling Dify API: {url}")
+            
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
-                    f"{settings.DIFY_API_URL}/chat-messages",
+                    url,
                     headers={
                         "Authorization": f"Bearer {settings.DIFY_API_KEY}",
                         "Content-Type": "application/json"
@@ -132,9 +135,12 @@ class TradingEngine:
                     }
                 )
                 
+                logger.info(f"Dify response status: {response.status_code}")
+                
                 if response.status_code == 200:
                     data = response.json()
                     answer = data.get("answer", "")
+                    logger.info(f"Dify answer: {answer[:200]}...")
                     
                     # Parse JSON from response
                     try:
@@ -148,10 +154,10 @@ class TradingEngine:
                         logger.error(f"Failed to parse sentiment JSON: {e}")
                         return {"sentiment": "neutral", "score": 0, "confidence": 0.5}
                 else:
-                    logger.error(f"Dify API error: {response.status_code}")
+                    logger.error(f"Dify API error: {response.status_code} - {response.text}")
                     
         except Exception as e:
-            logger.error(f"Sentiment analysis failed: {e}")
+            logger.error(f"Sentiment analysis failed: {type(e).__name__}: {e}")
         
         return None
     
