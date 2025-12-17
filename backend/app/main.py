@@ -42,6 +42,11 @@ async def lifespan(app: FastAPI):
             from schemas.bot import BotState
             bot_state["state"] = BotState.RUNNING
             logger.info("Trading bot auto-started (TRADING_ENABLED=true)")
+            
+            # Start trading engine in background
+            from engine.trading_engine import start_trading_engine
+            asyncio.create_task(start_trading_engine())
+            logger.info("Trading engine background task started")
         except Exception as e:
             logger.error(f"Failed to auto-start bot: {e}")
     
