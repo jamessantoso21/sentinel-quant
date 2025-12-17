@@ -137,7 +137,7 @@ async def get_trades(
     page_size: int = Query(20, ge=1, le=100),
     status: Optional[TradeStatus] = None
 ):
-    """Get user's trade history with pagination"""
+    """Get user's trade history with pagination and live P&L for open trades"""
     trade_repo = TradeRepository(db)
     skip = (page - 1) * page_size
     
@@ -148,11 +148,41 @@ async def get_trades(
         status=status
     )
     
+    # Enrich open trades with live P&L
+    open_trades_indices = [i for i, t in enumerate(trades) if t.exit_price is None]
+    
+    response_trades = [TradeResponse.model_validate(t) for t in trades]
+    
+    if open_trades_indices:
+        open_trades = [trades[i] for i in open_trades_indices]
+        symbols = list(set(t.symbol for t in open_trades))
+        live_prices = await get_live_prices(symbols)
+        
+        for i in open_trades_indices:
+            trade = trades[i]
+            current_price = live_prices.get(trade.symbol, trade.entry_price or 0)
+            entry_price = trade.entry_price or 0
+            quantity = trade.quantity or 0
+            
+            pnl_usdt = 0
+            pnl_percent = 0
+            
+            if trade.direction.value == "LONG":
+                pnl_usdt = (current_price - entry_price) * quantity
+                pnl_percent = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+            else:
+                pnl_usdt = (entry_price - current_price) * quantity
+                pnl_percent = ((entry_price - current_price) / entry_price * 100) if entry_price > 0 else 0
+            
+            # Update the response model
+            response_trades[i].pnl_usdt = round(pnl_usdt, 2)
+            response_trades[i].pnl_percent = round(pnl_percent, 2)
+    
     # Get total count for pagination
     total = await trade_repo.count()
     
     return TradeListResponse(
-        trades=[TradeResponse.model_validate(t) for t in trades],
+        trades=response_trades,
         total=total,
         page=page,
         page_size=page_size

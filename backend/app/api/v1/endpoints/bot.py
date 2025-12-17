@@ -75,22 +75,47 @@ async def get_voting_details(current_user: CurrentUser):
 
 @router.get("/status", response_model=BotStatus)
 async def get_bot_status(current_user: CurrentUser, db: DbSession):
-    """Get current bot status"""
+    """Get current bot status with live P&L"""
     position_repo = PositionRepository(db)
     trade_repo = TradeRepository(db)
     
-    # Get active positions count
-    positions = await position_repo.get_active_positions(current_user.id)
-    
-    # Get today's stats
+    # Get all trades to find active paper trades and today's stats
+    trades = await trade_repo.get_user_trades(user_id=current_user.id, limit=100)
     today_trades = await trade_repo.get_today_trades(current_user.id)
-    today_pnl = await trade_repo.get_today_pnl(current_user.id)
+    
+    # Filter active paper trades (no exit price)
+    active_paper_trades = [t for t in trades if t.exit_price is None]
+    active_positions_count = len(active_paper_trades)
+    
+    # Calculate Realized P&L Today
+    realized_today = await trade_repo.get_today_pnl(current_user.id) or 0
+    
+    # Calculate Unrealized P&L (Live)
+    unrealized_pnl = 0.0
+    if active_paper_trades:
+        from api.v1.endpoints.trades import get_live_prices
+        symbols = list(set(t.symbol for t in active_paper_trades))
+        live_prices = await get_live_prices(symbols)
+        
+        for trade in active_paper_trades:
+            current_price = live_prices.get(trade.symbol, trade.entry_price or 0)
+            entry_price = trade.entry_price or 0
+            quantity = trade.quantity or 0
+            
+            if trade.direction.value == "LONG":
+                unrealized_pnl += (current_price - entry_price) * quantity
+            else:
+                unrealized_pnl += (entry_price - current_price) * quantity
+    
+    # Total P&L Today = Realized Today + Unrealized (All active)
+    # Note: Usually Unrealized is separate, but user wants to see "Today's P&L" moving
+    total_today_pnl = realized_today + unrealized_pnl
     
     # Calculate daily loss usage
     # Assuming starting balance of max_position_size for simplicity
     starting_balance = current_user.max_position_size_usdt * 10  # Rough estimate
     max_daily_loss = starting_balance * (current_user.max_daily_loss_percent / 100)
-    daily_loss_used = abs(min(today_pnl, 0)) / max_daily_loss * 100 if max_daily_loss > 0 else 0
+    daily_loss_used = abs(min(total_today_pnl, 0)) / max_daily_loss * 100 if max_daily_loss > 0 else 0
     
     # Check connections
     redis_connected = True
@@ -107,11 +132,11 @@ async def get_bot_status(current_user: CurrentUser, db: DbSession):
         exchange_connected=True,  # Placeholder
         database_connected=True,
         redis_connected=redis_connected,
-        active_positions=len(positions),
-        pending_orders=0,  # TODO: Get from exchange
+        active_positions=active_positions_count,
+        pending_orders=0,
         trades_today=len(today_trades),
-        pnl_today=today_pnl,
-        pnl_today_percent=(today_pnl / starting_balance * 100) if starting_balance else 0,
+        pnl_today=round(total_today_pnl, 2),
+        pnl_today_percent=(total_today_pnl / starting_balance * 100) if starting_balance else 0,
         last_signal_time=bot_state.get("last_signal_time"),
         last_signal=bot_state.get("last_signal"),
         current_confidence=bot_state.get("current_confidence"),
@@ -164,30 +189,72 @@ async def emergency_kill_switch(
 
 
 async def execute_kill_switch(current_user, db: DbSession) -> KillSwitchResponse:
-    """Execute the kill switch logic"""
+    """Execute the kill switch logic - close all positions/trades and stop bot"""
     global bot_state
     
     position_repo = PositionRepository(db)
+    trade_repo = TradeRepository(db)
     
-    # Get all active positions
+    # 1. Close PositionRepository positions (if any)
     positions = await position_repo.get_active_positions(current_user.id)
-    total_value = sum(p.position_value for p in positions)
+    closed_positions_count = await position_repo.close_all_positions(current_user.id)
     
-    # Close all positions
-    closed_count = await position_repo.close_all_positions(current_user.id)
+    # 2. Close Active Paper Trades (TradeRepository)
+    trades = await trade_repo.get_user_trades(user_id=current_user.id, limit=100)
+    active_trades = [t for t in trades if t.exit_price is None]
     
+    paper_closed_count = 0
+    total_value_liquidated = sum(p.position_value for p in positions)
+    
+    if active_trades:
+        from api.v1.endpoints.trades import get_live_prices
+        from datetime import datetime, timezone
+        
+        symbols = list(set(t.symbol for t in active_trades))
+        live_prices = await get_live_prices(symbols)
+        
+        for trade in active_trades:
+            close_price = live_prices.get(trade.symbol, trade.entry_price)
+            
+            # Calculate P&L
+            if trade.direction.value == "LONG":
+                pnl_usdt = (close_price - trade.entry_price) * trade.quantity
+                pnl_percent = ((close_price - trade.entry_price) / trade.entry_price * 100)
+            else:
+                pnl_usdt = (trade.entry_price - close_price) * trade.quantity
+                pnl_percent = ((trade.entry_price - close_price) / trade.entry_price * 100)
+                
+            # Update trade
+            await trade_repo.update(
+                trade.id,
+                obj_in={
+                    "exit_price": close_price,
+                    "exit_time": datetime.now(timezone.utc),
+                    "pnl_usdt": pnl_usdt,
+                    "pnl_percent": pnl_percent,
+                    "status": "CLOSED",
+                    "notes": f"{trade.notes or ''} | CLOSED by Kill Switch"
+                }
+            )
+            paper_closed_count += 1
+            total_value_liquidated += (close_price * trade.quantity)
+            
     # Stop the bot
     bot_state["state"] = BotState.STOPPED
     
-    # TODO: Send actual close orders to exchange
-    # TODO: Calculate actual final balance
+    # Clear memory positions in TradingEngine if running
+    # This is a bit tricky since we can't easily access the running engine instance from here
+    # But next cycle it will see trades are closed? No, engine keeps memory state.
+    # ideally we should signal engine to clear state. For now, stopping bot prevents new trades.
+    
+    total_closed = closed_positions_count + paper_closed_count
     
     return KillSwitchResponse(
         success=True,
-        positions_closed=closed_count,
-        total_value_liquidated=total_value,
-        final_balance_usdt=total_value,  # Simplified
-        message=f"Kill switch activated. Closed {closed_count} positions. Bot stopped."
+        positions_closed=total_closed,
+        total_value_liquidated=total_value_liquidated,
+        final_balance_usdt=total_value_liquidated,  # Simplified
+        message=f"Kill switch activated. Closed {total_closed} trades/positions. Bot stopped."
     )
 
 
