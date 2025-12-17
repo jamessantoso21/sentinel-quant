@@ -51,11 +51,23 @@ class TradingEngine:
         """Single trading cycle"""
         logger.info(f"Running trading cycle for {self.current_symbol}")
         
+        # Import activity logger
+        from api.v1.endpoints.bot import add_activity, bot_state
+        
         # 1. Get market sentiment from Dify
         sentiment = await self._get_sentiment()
         if sentiment:
             self.last_sentiment = sentiment
+            bot_state["current_sentiment"] = sentiment.get("sentiment")
+            bot_state["current_confidence"] = sentiment.get("confidence")
+            add_activity(
+                "SENTIMENT_ANALYSIS",
+                f"Dify: {sentiment.get('sentiment')} (score: {sentiment.get('score', 0):.2f}, confidence: {sentiment.get('confidence', 0):.2f})",
+                traded=False
+            )
             logger.info(f"Sentiment: {sentiment}")
+        else:
+            add_activity("SENTIMENT_ANALYSIS", "Failed to get sentiment from Dify", traded=False)
         
         # 2. Get AI prediction (from trained models)
         ai_confidence = await self._get_ai_prediction()
@@ -67,15 +79,33 @@ class TradingEngine:
         # 4. Check if should trade
         if combined_confidence >= settings.CONFIDENCE_THRESHOLD:
             signal = "BUY" if (sentiment and sentiment.get("score", 0) > 0) else "SELL"
+            bot_state["last_signal"] = signal
             logger.info(f"Trade signal: {signal} with confidence {combined_confidence:.2f}")
             
             # 5. Execute trade (if trading enabled)
             if settings.TRADING_ENABLED:
+                add_activity(
+                    f"TRADE_{signal}",
+                    f"Executing {signal} - confidence: {combined_confidence:.2f} >= threshold: {settings.CONFIDENCE_THRESHOLD}",
+                    traded=True
+                )
                 await self._execute_trade(signal, combined_confidence)
+            else:
+                add_activity(
+                    "TRADE_SKIPPED",
+                    f"Trading disabled. Would {signal} with confidence {combined_confidence:.2f}",
+                    traded=False
+                )
         else:
+            add_activity(
+                "NO_TRADE",
+                f"Confidence {combined_confidence:.2f} < threshold {settings.CONFIDENCE_THRESHOLD}. Sentiment: {sentiment.get('sentiment') if sentiment else 'N/A'}",
+                traded=False
+            )
             logger.info(f"No trade - confidence {combined_confidence:.2f} < threshold {settings.CONFIDENCE_THRESHOLD}")
         
         self.last_signal_time = datetime.now(timezone.utc)
+        bot_state["last_signal_time"] = self.last_signal_time.isoformat()
     
     async def _get_sentiment(self) -> Optional[Dict]:
         """Get market sentiment from Dify"""

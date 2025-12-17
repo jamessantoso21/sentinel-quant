@@ -23,8 +23,36 @@ bot_state = {
     "last_signal_time": None,
     "last_signal": None,
     "current_confidence": None,
-    "current_sentiment": None
+    "current_sentiment": None,
+    "activity_log": []  # Store recent activity
 }
+
+
+def add_activity(action: str, details: str, traded: bool = False):
+    """Add activity to log"""
+    from datetime import datetime, timezone
+    log_entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "details": details,
+        "traded": traded
+    }
+    bot_state["activity_log"].insert(0, log_entry)
+    # Keep only last 50 entries
+    bot_state["activity_log"] = bot_state["activity_log"][:50]
+
+
+@router.get("/activity")
+async def get_bot_activity(current_user: CurrentUser, limit: int = 20):
+    """Get recent bot activity/decisions"""
+    return {
+        "state": bot_state["state"],
+        "last_signal_time": bot_state.get("last_signal_time"),
+        "last_signal": bot_state.get("last_signal"),
+        "current_confidence": bot_state.get("current_confidence"),
+        "current_sentiment": bot_state.get("current_sentiment"),
+        "activity_log": bot_state["activity_log"][:limit]
+    }
 
 
 @router.get("/status", response_model=BotStatus)
