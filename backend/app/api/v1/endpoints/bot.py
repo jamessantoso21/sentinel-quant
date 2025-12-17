@@ -1,8 +1,11 @@
 """
 Sentinel Quant - Bot Control Endpoints
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from datetime import datetime, timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 from api.deps import DbSession, CurrentUser, TradingUser
 from db.repositories.position import PositionRepository
@@ -185,3 +188,48 @@ async def get_current_signal(current_user: CurrentUser):
         "last_signal_time": bot_state.get("last_signal_time"),
         "last_signal": bot_state.get("last_signal")
     }
+
+
+@router.post("/trigger-cycle")
+async def trigger_trading_cycle(current_user: TradingUser):
+    """Manually trigger one trading cycle for testing"""
+    try:
+        from engine.trading_engine import trading_engine
+        
+        # Run one cycle
+        await trading_engine._trading_cycle()
+        
+        return {
+            "message": "Trading cycle completed",
+            "activity_log": bot_state["activity_log"][:5]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Trading cycle failed: {str(e)}")
+
+
+# Background task for trading loop
+_background_task = None
+
+async def run_trading_loop():
+    """Background trading loop"""
+    import asyncio
+    from engine.trading_engine import trading_engine
+    
+    while bot_state["state"].value == "RUNNING":
+        try:
+            await trading_engine._trading_cycle()
+        except Exception as e:
+            logger.error(f"Trading loop error: {e}")
+        
+        await asyncio.sleep(300)  # 5 minutes
+
+
+def start_background_trading():
+    """Start background trading task"""
+    global _background_task
+    import asyncio
+    
+    if _background_task is None or _background_task.done():
+        _background_task = asyncio.create_task(run_trading_loop())
+        return True
+    return False
