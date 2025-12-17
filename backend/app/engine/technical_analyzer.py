@@ -32,6 +32,11 @@ class TechnicalAnalyzer:
     Computes RSI, Bollinger Bands, and trend detection.
     """
     
+    # Class-level cache to persist across instances
+    _price_cache = {}
+    _cache_times = {}
+    _cache_duration = 300  # 5 minutes cache
+    
     def __init__(self):
         self.rsi_oversold = 30
         self.rsi_overbought = 70
@@ -159,14 +164,30 @@ class TechnicalAnalyzer:
     
     async def _fetch_price_data(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
         """Fetch OHLCV data - try CoinGecko first (no geo-block), fallback to Binance"""
+        import time
+        
+        # Check cache first
+        cache_key = f"{symbol}_{limit}"
+        if cache_key in self._price_cache:
+            cache_age = time.time() - self._cache_times.get(cache_key, 0)
+            if cache_age < self._cache_duration:
+                logger.info(f"Using cached price data for {symbol} (age: {cache_age:.0f}s)")
+                return self._price_cache[cache_key].copy()
         
         # Try CoinGecko first (no geo-restrictions)
         df = await self._fetch_from_coingecko(symbol, limit)
         if df is not None and len(df) >= 40:  # CoinGecko provides ~42 candles
+            # Cache the result
+            self._price_cache[cache_key] = df.copy()
+            self._cache_times[cache_key] = time.time()
+            logger.info(f"Cached price data for {symbol}")
             return df
         
         # Fallback to Binance
         df = await self._fetch_from_binance(symbol, limit)
+        if df is not None and len(df) >= 40:
+            self._price_cache[cache_key] = df.copy()
+            self._cache_times[cache_key] = time.time()
         return df
     
     async def _fetch_from_coingecko(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
