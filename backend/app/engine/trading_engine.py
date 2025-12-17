@@ -218,6 +218,14 @@ class TradingEngine:
         bot_state["last_signal"] = action
         bot_state["market_condition"] = market_condition
         
+        # TESTING: Force a trade to see position open
+        FORCE_TEST_TRADE = True  # Set to False after testing!
+        
+        if FORCE_TEST_TRADE and self.current_symbol == "BTC/USDT" and self.current_symbol not in self.positions:
+            logger.info("FORCE_TEST_TRADE: Forcing BUY signal for testing!")
+            action = "BUY"
+            voting_result.should_trade = True
+        
         # 4. Execute based on voting result
         if voting_result.should_trade and action in ["BUY", "SELL"]:
             # Skip if already have position in this symbol
