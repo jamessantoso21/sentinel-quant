@@ -138,14 +138,19 @@ class CryptoNewsFetcher:
         Returns:
             Formatted text for Dify
         """
+        # Special context for PAXG (gold-backed token)
+        asset_context = ""
+        if symbol == "PAXG":
+            asset_context = "Note: PAXG (Pax Gold) is a gold-backed cryptocurrency. 1 PAXG = 1 oz of physical gold. Consider gold market factors and safe-haven demand.\n\n"
+        
         if not news_items:
             # Fallback to generic market context
-            return f"""Current market conditions for {symbol}/USDT: 
-The crypto market is showing mixed signals with {symbol} consolidating near recent price levels. 
+            return f"""{asset_context}Current market conditions for {symbol}/USDT: 
+The market is showing mixed signals with {symbol} consolidating near recent price levels. 
 No specific news available at this time. Analyze general market sentiment."""
         
         # Build news summary
-        news_text = f"Latest {symbol} News Headlines:\n\n"
+        news_text = f"{asset_context}Latest {symbol} News Headlines:\n\n"
         
         for i, item in enumerate(news_items, 1):
             age = datetime.now() - item.published_at
