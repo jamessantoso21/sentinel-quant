@@ -59,8 +59,8 @@ class MultiModelVoter:
     - Confidence = weighted average of agreeing voters
     """
     
-    def __init__(self, min_consensus: float = 0.6):
-        self.min_consensus = min_consensus  # 60% = 2/3 or 3/4 agree
+    def __init__(self, min_consensus: float = 0.75):  # INCREASED: 75% for higher win rate
+        self.min_consensus = min_consensus
     
     def vote(
         self,
@@ -82,16 +82,103 @@ class MultiModelVoter:
         technical_vote = self._get_technical_vote(technical_data)
         votes.append(technical_vote)
         
-        # 3. LSTM Vote (placeholder)
-        lstm_vote = self._get_lstm_vote(lstm_prediction)
-        votes.append(lstm_vote)
+        # 3. Momentum Vote (NEW - lightweight, no ML!)
+        momentum_vote = self._get_momentum_vote(technical_data)
+        votes.append(momentum_vote)
         
-        # 4. PPO Vote (placeholder)
-        ppo_vote = self._get_ppo_vote(ppo_action)
-        votes.append(ppo_vote)
+        # 4. Trend Confirmation Vote (NEW)
+        trend_vote = self._get_trend_vote(technical_data)
+        votes.append(trend_vote)
         
         # Aggregate votes
         return self._aggregate_votes(votes)
+    
+    def _get_momentum_vote(self, technical_data) -> Vote:
+        """
+        Momentum voter - checks if price momentum supports the trade.
+        Based on RSI momentum (is RSI rising or falling?)
+        """
+        if not technical_data:
+            return Vote(
+                voter_name="Momentum",
+                vote=VoteType.ABSTAIN,
+                confidence=0.0,
+                reasoning="No data",
+                is_active=True
+            )
+        
+        rsi = technical_data.rsi
+        bb_position = technical_data.bb_position
+        
+        # Strong momentum signals
+        if rsi < 30 and bb_position < 0.2:
+            # Extremely oversold - strong BUY momentum
+            vote_type = VoteType.BUY
+            confidence = 0.9
+            reason = f"Oversold momentum (RSI={rsi:.0f}, BB={bb_position:.2f})"
+        elif rsi > 70 and bb_position > 0.8:
+            # Extremely overbought - strong SELL momentum
+            vote_type = VoteType.SELL
+            confidence = 0.9
+            reason = f"Overbought momentum (RSI={rsi:.0f}, BB={bb_position:.2f})"
+        elif rsi < 40:
+            # Mild oversold
+            vote_type = VoteType.BUY
+            confidence = 0.6
+            reason = f"Mild oversold (RSI={rsi:.0f})"
+        elif rsi > 60:
+            # Mild overbought
+            vote_type = VoteType.SELL
+            confidence = 0.6
+            reason = f"Mild overbought (RSI={rsi:.0f})"
+        else:
+            vote_type = VoteType.HOLD
+            confidence = 0.5
+            reason = f"Neutral momentum (RSI={rsi:.0f})"
+        
+        return Vote(
+            voter_name="Momentum",
+            vote=vote_type,
+            confidence=confidence,
+            reasoning=reason,
+            is_active=True
+        )
+    
+    def _get_trend_vote(self, technical_data) -> Vote:
+        """
+        Trend confirmation voter - only trade in direction of trend.
+        """
+        if not technical_data:
+            return Vote(
+                voter_name="Trend",
+                vote=VoteType.ABSTAIN,
+                confidence=0.0,
+                reasoning="No data",
+                is_active=True
+            )
+        
+        trend = technical_data.trend
+        
+        if trend == "UP":
+            vote_type = VoteType.BUY
+            confidence = 0.8
+            reason = "Uptrend confirmed"
+        elif trend == "DOWN":
+            vote_type = VoteType.SELL
+            confidence = 0.8
+            reason = "Downtrend confirmed"
+        else:  # SIDEWAYS
+            vote_type = VoteType.HOLD
+            confidence = 0.7
+            reason = "Sideways - no clear trend"
+        
+        return Vote(
+            voter_name="Trend",
+            vote=vote_type,
+            confidence=confidence,
+            reasoning=reason,
+            is_active=True
+        )
     
     def _get_sentiment_vote(self, data: Optional[Dict]) -> Vote:
         """Convert Dify sentiment to vote"""
