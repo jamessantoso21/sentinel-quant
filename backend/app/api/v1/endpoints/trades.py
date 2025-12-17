@@ -161,22 +161,73 @@ async def get_trades(
 
 @router.get("/today")
 async def get_today_trades(current_user: CurrentUser, db: DbSession):
-    """Get today's trades"""
+    """Get today's trades with live P&L for open positions"""
     trade_repo = TradeRepository(db)
     trades = await trade_repo.get_today_trades(current_user.id)
     
+    # Calculate live P&L for open trades
+    open_trades = [t for t in trades if t.exit_price is None]
+    realized_pnl = await trade_repo.get_today_pnl(current_user.id)
+    
+    unrealized_pnl = 0.0
+    if open_trades:
+        symbols = list(set(t.symbol for t in open_trades))
+        live_prices = await get_live_prices(symbols)
+        
+        for trade in open_trades:
+            current_price = live_prices.get(trade.symbol, trade.entry_price or 0)
+            entry_price = trade.entry_price or 0
+            quantity = trade.quantity or 0
+            
+            if trade.direction.value == "LONG":
+                unrealized_pnl += (current_price - entry_price) * quantity
+            else:
+                unrealized_pnl += (entry_price - current_price) * quantity
+    
     return {
         "trades": [TradeResponse.model_validate(t) for t in trades],
-        "pnl_today": await trade_repo.get_today_pnl(current_user.id)
+        "realized_pnl": round(realized_pnl or 0, 2),
+        "unrealized_pnl": round(unrealized_pnl, 2),
+        "pnl_today": round((realized_pnl or 0) + unrealized_pnl, 2)  # Total = realized + unrealized
     }
 
 
-@router.get("/summary", response_model=TradeSummary)
+@router.get("/summary")
 async def get_trade_summary(current_user: CurrentUser, db: DbSession):
-    """Get trade statistics summary"""
+    """Get trade statistics summary with live unrealized P&L"""
     trade_repo = TradeRepository(db)
     stats = await trade_repo.get_trade_statistics(current_user.id)
-    return TradeSummary(**stats)
+    
+    # Get all trades to calculate unrealized P&L for open positions
+    trades = await trade_repo.get_user_trades(user_id=current_user.id, limit=100)
+    open_trades = [t for t in trades if t.exit_price is None]
+    
+    unrealized_pnl = 0.0
+    if open_trades:
+        symbols = list(set(t.symbol for t in open_trades))
+        live_prices = await get_live_prices(symbols)
+        
+        for trade in open_trades:
+            current_price = live_prices.get(trade.symbol, trade.entry_price or 0)
+            entry_price = trade.entry_price or 0
+            quantity = trade.quantity or 0
+            
+            if trade.direction.value == "LONG":
+                unrealized_pnl += (current_price - entry_price) * quantity
+            else:
+                unrealized_pnl += (entry_price - current_price) * quantity
+    
+    # Add unrealized P&L to total
+    realized_pnl = stats.get('total_pnl_usdt', 0) or 0
+    total_pnl = realized_pnl + unrealized_pnl
+    
+    return {
+        **stats,
+        "realized_pnl_usdt": round(realized_pnl, 2),
+        "unrealized_pnl_usdt": round(unrealized_pnl, 2),
+        "total_pnl_usdt": round(total_pnl, 2),  # Combined
+        "active_positions": len(open_trades)
+    }
 
 
 @router.get("/{trade_id}", response_model=TradeResponse)
