@@ -157,6 +157,12 @@ async def send_bot_command(
     
     if command.action == BotAction.START:
         bot_state["state"] = BotState.RUNNING
+        
+        # Restart the background task
+        import asyncio
+        from engine.trading_engine import start_trading_engine
+        asyncio.create_task(start_trading_engine())
+        
         return {"message": "Bot started", "state": BotState.RUNNING}
     
     elif command.action == BotAction.PAUSE:
