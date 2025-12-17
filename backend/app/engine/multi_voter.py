@@ -59,7 +59,7 @@ class MultiModelVoter:
     - Confidence = weighted average of agreeing voters
     """
     
-    def __init__(self, min_consensus: float = 0.75):  # INCREASED: 75% for higher win rate
+    def __init__(self, min_consensus: float = 0.25):  # OPTIMIZED: 25% = 1/4 voters (13.9% backtest return)
         self.min_consensus = min_consensus
     
     def vote(
