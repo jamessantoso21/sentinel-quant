@@ -48,11 +48,12 @@ class TradingEngine:
         logger.info("Trading engine stopped")
     
     async def _trading_cycle(self):
-        """Single trading cycle with Sentiment + Technical confluence"""
+        """Single trading cycle with Sentiment + Technical confluence + SMA validation"""
         logger.info(f"Running trading cycle for {self.current_symbol}")
         
         # Import activity logger
         from api.v1.endpoints.bot import add_activity, bot_state
+        from engine.sentiment_tracker import sentiment_tracker
         
         # 1. Get market sentiment from Dify
         sentiment = await self._get_sentiment()
@@ -60,12 +61,43 @@ class TradingEngine:
             self.last_sentiment = sentiment
             bot_state["current_sentiment"] = sentiment.get("score", 0.0)
             bot_state["current_confidence"] = sentiment.get("confidence", 0.5)
+            
+            # Record to sentiment history for SMA
+            symbol = self.current_symbol.split("/")[0]
+            sentiment_tracker.record(
+                sentiment=sentiment.get("sentiment", "neutral"),
+                score=sentiment.get("score", 0),
+                confidence=sentiment.get("confidence", 0.5),
+                symbol=symbol
+            )
+            
+            # Check SMA - validate against history to detect fake pumps
+            trust_check = sentiment_tracker.should_trust_current_sentiment(
+                current_sentiment=sentiment.get("sentiment", "neutral"),
+                current_score=sentiment.get("score", 0),
+                period_hours=6
+            )
+            
+            sma = trust_check.get("sma")
+            sma_info = f"SMA-6h: {sma.avg_score:.2f} ({sma.data_points}pts)" if sma else "SMA: N/A"
+            trust_info = f"Trust: {trust_check['trust_score']:.0%}"
+            
             add_activity(
                 "SENTIMENT_ANALYSIS",
-                f"Dify: {sentiment.get('sentiment')} (score: {sentiment.get('score', 0):.2f}, confidence: {sentiment.get('confidence', 0):.2f})",
+                f"Dify: {sentiment.get('sentiment')} (score: {sentiment.get('score', 0):.2f}). {sma_info}. {trust_info}",
                 traded=False
             )
-            logger.info(f"Sentiment: {sentiment}")
+            
+            # Store trust info in bot_state
+            bot_state["sentiment_trust"] = trust_check["trust_score"]
+            bot_state["sentiment_sma"] = sma.avg_score if sma else None
+            
+            # Log warning if fake pump detected
+            if not trust_check["trust"]:
+                logger.warning(f"FAKE PUMP WARNING: {trust_check['reason']}")
+                add_activity("SENTIMENT_WARNING", trust_check["reason"], traded=False)
+            
+            logger.info(f"Sentiment: {sentiment}. {trust_check['reason']}")
         else:
             add_activity("SENTIMENT_ANALYSIS", "Failed to get sentiment from Dify", traded=False)
         
@@ -92,6 +124,16 @@ class TradingEngine:
         confidence = decision["confidence"]
         reasoning = decision["reasoning"]
         market_condition = decision["market_condition"]
+        
+        # 3.5 Apply SMA trust factor to confidence (fake pump protection)
+        if sentiment and "trust_check" in dir():
+            trust_score = trust_check.get("trust_score", 1.0)
+            if trust_score < 0.5:
+                # Reduce confidence for untrusted sentiment (possible fake pump)
+                original_confidence = confidence
+                confidence = confidence * trust_score
+                logger.warning(f"Confidence reduced: {original_confidence:.2f} -> {confidence:.2f} (trust={trust_score:.2f})")
+                reasoning += f" [Trust penalty: {trust_score:.0%}]"
         
         bot_state["last_signal"] = action
         bot_state["market_condition"] = market_condition
