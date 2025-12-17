@@ -14,9 +14,21 @@ from schemas.trade import (
 
 router = APIRouter()
 
+# Cache for live prices (30 second TTL)
+_price_cache: dict = {}
+_price_cache_time: float = 0
+PRICE_CACHE_TTL = 30  # seconds
+
 
 async def get_live_prices(symbols: list[str]) -> dict:
-    """Fetch live prices from CoinGecko"""
+    """Fetch live prices from CoinGecko with caching"""
+    import time
+    global _price_cache, _price_cache_time
+    
+    # Check cache first
+    if time.time() - _price_cache_time < PRICE_CACHE_TTL and _price_cache:
+        return {s: _price_cache.get(s, 0) for s in symbols}
+    
     coin_map = {
         "BTC/USDT": "bitcoin",
         "PAXG/USDT": "pax-gold",
@@ -38,9 +50,17 @@ async def get_live_prices(symbols: list[str]) -> dict:
                 for symbol in symbols:
                     coin_id = coin_map.get(symbol, "bitcoin")
                     result[symbol] = data.get(coin_id, {}).get("usd", 0)
+                
+                # Update cache
+                _price_cache = result
+                _price_cache_time = time.time()
                 return result
     except Exception:
         pass
+    
+    # Return cached prices if available, even if stale
+    if _price_cache:
+        return {s: _price_cache.get(s, 0) for s in symbols}
     return {}
 
 
