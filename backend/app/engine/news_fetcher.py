@@ -89,13 +89,29 @@ class CryptoNewsFetcher:
                     news_items = []
                     for article in articles:
                         try:
+                            # Safely get body text
+                            body = article.get("body", "") or ""
+                            if isinstance(body, str):
+                                body = body[:500]
+                            else:
+                                body = str(body)[:500]
+                            
+                            # Safely get categories
+                            cats = article.get("categories", "")
+                            if isinstance(cats, str):
+                                categories = cats.split("|")
+                            elif isinstance(cats, list):
+                                categories = cats
+                            else:
+                                categories = []
+                            
                             news_items.append(NewsItem(
-                                title=article.get("title", ""),
-                                body=article.get("body", "")[:500],  # Limit body length
-                                source=article.get("source", "unknown"),
+                                title=str(article.get("title", "")),
+                                body=body,
+                                source=str(article.get("source", "unknown")),
                                 published_at=datetime.fromtimestamp(article.get("published_on", 0)),
-                                url=article.get("url", ""),
-                                categories=article.get("categories", "").split("|")
+                                url=str(article.get("url", "")),
+                                categories=categories
                             ))
                         except Exception as e:
                             logger.warning(f"Failed to parse article: {e}")
