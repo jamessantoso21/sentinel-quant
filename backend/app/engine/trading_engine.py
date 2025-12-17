@@ -48,7 +48,7 @@ class TradingEngine:
         logger.info("Trading engine stopped")
     
     async def _trading_cycle(self):
-        """Single trading cycle"""
+        """Single trading cycle with Sentiment + Technical confluence"""
         logger.info(f"Running trading cycle for {self.current_symbol}")
         
         # Import activity logger
@@ -58,7 +58,6 @@ class TradingEngine:
         sentiment = await self._get_sentiment()
         if sentiment:
             self.last_sentiment = sentiment
-            # Store score (float) not sentiment label (string) for BotStatus schema
             bot_state["current_sentiment"] = sentiment.get("score", 0.0)
             bot_state["current_confidence"] = sentiment.get("confidence", 0.5)
             add_activity(
@@ -70,43 +69,162 @@ class TradingEngine:
         else:
             add_activity("SENTIMENT_ANALYSIS", "Failed to get sentiment from Dify", traded=False)
         
-        # 2. Get AI prediction (from trained models)
-        ai_confidence = await self._get_ai_prediction()
-        self.last_ai_prediction = ai_confidence
+        # 2. Get Technical Analysis (RSI, BB, Trend)
+        from engine.technical_analyzer import technical_analyzer
+        technical = await technical_analyzer.analyze(self.current_symbol)
         
-        # 3. Combine signals
-        combined_confidence = self._combine_signals(sentiment, ai_confidence)
+        if technical:
+            add_activity(
+                "TECHNICAL_ANALYSIS",
+                f"RSI: {technical.rsi:.1f} ({technical.rsi_signal}), BB: {technical.bb_position:.2f} ({technical.bb_signal}), Trend: {technical.trend}",
+                traded=False
+            )
+            logger.info(f"Technical: RSI={technical.rsi:.1f}, BB={technical.bb_position:.2f}, Signal={technical.overall_signal}")
+            bot_state["technical_signal"] = technical.overall_signal
+            bot_state["rsi"] = technical.rsi
+        else:
+            add_activity("TECHNICAL_ANALYSIS", "Failed to get technical data", traded=False)
         
-        # 4. Check if should trade
-        if combined_confidence >= settings.CONFIDENCE_THRESHOLD:
-            signal = "BUY" if (sentiment and sentiment.get("score", 0) > 0) else "SELL"
-            bot_state["last_signal"] = signal
-            logger.info(f"Trade signal: {signal} with confidence {combined_confidence:.2f}")
+        # 3. Enhanced Decision Logic (Confluence)
+        decision = self._make_enhanced_decision(sentiment, technical)
+        
+        action = decision["action"]
+        confidence = decision["confidence"]
+        reasoning = decision["reasoning"]
+        market_condition = decision["market_condition"]
+        
+        bot_state["last_signal"] = action
+        bot_state["market_condition"] = market_condition
+        
+        # 4. Execute based on decision
+        if action in ["BUY", "SELL"] and confidence >= settings.CONFIDENCE_THRESHOLD:
+            logger.info(f"Trade signal: {action} with confidence {confidence:.2f}")
             
-            # 5. Execute trade (if trading enabled)
             if settings.TRADING_ENABLED:
                 add_activity(
-                    f"TRADE_{signal}",
-                    f"Executing {signal} - confidence: {combined_confidence:.2f} >= threshold: {settings.CONFIDENCE_THRESHOLD}",
+                    f"TRADE_{action}",
+                    f"{market_condition}: {reasoning} (confidence: {confidence:.2f})",
                     traded=True
                 )
-                await self._execute_trade(signal, combined_confidence)
+                await self._execute_trade(action, confidence)
             else:
                 add_activity(
                     "TRADE_SKIPPED",
-                    f"Trading disabled. Would {signal} with confidence {combined_confidence:.2f}",
+                    f"Trading disabled. {market_condition}: {reasoning}",
                     traded=False
                 )
         else:
             add_activity(
                 "NO_TRADE",
-                f"Confidence {combined_confidence:.2f} < threshold {settings.CONFIDENCE_THRESHOLD}. Sentiment: {sentiment.get('sentiment') if sentiment else 'N/A'}",
+                f"{market_condition}: {reasoning} (confidence: {confidence:.2f} vs threshold: {settings.CONFIDENCE_THRESHOLD})",
                 traded=False
             )
-            logger.info(f"No trade - confidence {combined_confidence:.2f} < threshold {settings.CONFIDENCE_THRESHOLD}")
+            logger.info(f"No trade - {reasoning}")
         
         self.last_signal_time = datetime.now(timezone.utc)
         bot_state["last_signal_time"] = self.last_signal_time.isoformat()
+    
+    def _make_enhanced_decision(self, sentiment: Optional[Dict], technical) -> Dict:
+        """
+        Confluence-based decision making.
+        
+        IDEAL_BUY: Bullish sentiment + Oversold (RSI<30)
+        IDEAL_SELL: Bearish sentiment + Overbought (RSI>70)
+        RISKY: Sentiment and technical disagree
+        """
+        # Default values
+        if not sentiment and not technical:
+            return {
+                "action": "HOLD",
+                "confidence": 0.3,
+                "reasoning": "No data available",
+                "market_condition": "NO_DATA"
+            }
+        
+        # Extract sentiment
+        sent_label = sentiment.get("sentiment", "neutral") if sentiment else "neutral"
+        sent_score = sentiment.get("score", 0) if sentiment else 0
+        sent_conf = sentiment.get("confidence", 0.5) if sentiment else 0.5
+        
+        is_bullish = sent_label.lower() == "bullish" or sent_score > 0.3
+        is_bearish = sent_label.lower() == "bearish" or sent_score < -0.3
+        
+        # Extract technical
+        if technical:
+            rsi = technical.rsi
+            is_oversold = rsi < 35 or technical.rsi_signal == "OVERSOLD"
+            is_overbought = rsi > 65 or technical.rsi_signal == "OVERBOUGHT"
+            tech_signal = technical.overall_signal
+            tech_conf = technical.confluence_score
+        else:
+            rsi = 50
+            is_oversold = False
+            is_overbought = False
+            tech_signal = "NEUTRAL"
+            tech_conf = 0.5
+        
+        # ========== CONFLUENCE DECISION MATRIX ==========
+        
+        # IDEAL BUY: Bullish + Oversold = Buy the dip!
+        if is_bullish and is_oversold:
+            return {
+                "action": "BUY",
+                "confidence": min((sent_conf + tech_conf) / 2 * 1.3, 1.0),
+                "reasoning": f"CONFLUENCE: Bullish sentiment + Oversold (RSI:{rsi:.0f}). Buy the dip!",
+                "market_condition": "IDEAL_BUY"
+            }
+        
+        # IDEAL SELL: Bearish + Overbought = Sell the top!
+        if is_bearish and is_overbought:
+            return {
+                "action": "SELL",
+                "confidence": min((sent_conf + tech_conf) / 2 * 1.3, 1.0),
+                "reasoning": f"CONFLUENCE: Bearish sentiment + Overbought (RSI:{rsi:.0f}). Sell the top!",
+                "market_condition": "IDEAL_SELL"
+            }
+        
+        # RISKY: Bullish + Overbought = Don't chase!
+        if is_bullish and is_overbought:
+            return {
+                "action": "HOLD",
+                "confidence": 0.4,
+                "reasoning": f"RISKY: Bullish news but OVERBOUGHT (RSI:{rsi:.0f}). Don't chase the pump!",
+                "market_condition": "RISKY_OVERBOUGHT"
+            }
+        
+        # RISKY: Bearish + Oversold = Could bounce!
+        if is_bearish and is_oversold:
+            return {
+                "action": "HOLD",
+                "confidence": 0.4,
+                "reasoning": f"RISKY: Bearish news but OVERSOLD (RSI:{rsi:.0f}). Could bounce or capitulate.",
+                "market_condition": "RISKY_OVERSOLD"
+            }
+        
+        # MODERATE: Sentiment aligns with technical
+        if is_bullish and tech_signal == "BUY":
+            return {
+                "action": "BUY",
+                "confidence": (sent_conf + tech_conf) / 2,
+                "reasoning": f"MODERATE: Bullish sentiment + Technical BUY (RSI:{rsi:.0f})",
+                "market_condition": "MODERATE_BUY"
+            }
+        
+        if is_bearish and tech_signal == "SELL":
+            return {
+                "action": "SELL",
+                "confidence": (sent_conf + tech_conf) / 2,
+                "reasoning": f"MODERATE: Bearish sentiment + Technical SELL (RSI:{rsi:.0f})",
+                "market_condition": "MODERATE_SELL"
+            }
+        
+        # NEUTRAL: No clear confluence
+        return {
+            "action": "HOLD",
+            "confidence": 0.5,
+            "reasoning": f"NO CONFLUENCE: Sentiment={sent_label}, Technical={tech_signal}, RSI={rsi:.0f}",
+            "market_condition": "NEUTRAL"
+        }
     
     async def _get_sentiment(self) -> Optional[Dict]:
         """Get market sentiment from Dify"""
