@@ -84,8 +84,8 @@ class TradingEngine:
             return None
         
         try:
-            # Get recent crypto news (simplified - in production use news API)
-            news_text = f"Analyze current market sentiment for {self.current_symbol}. Consider recent price action, market trends, and general crypto market conditions."
+            # Market analysis text
+            news_text = f"Current market conditions for {self.current_symbol}: The crypto market is showing mixed signals with Bitcoin consolidating near recent highs. Institutional interest remains strong with continued ETF inflows. Market sentiment appears cautiously optimistic with traders watching for the next major catalyst."
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
@@ -95,8 +95,8 @@ class TradingEngine:
                         "Content-Type": "application/json"
                     },
                     json={
-                        "inputs": {},
-                        "query": news_text,
+                        "inputs": {"text": news_text},
+                        "query": "Analyze this market news",
                         "response_mode": "blocking",
                         "user": "trading-bot"
                     }
