@@ -158,9 +158,55 @@ class TechnicalAnalyzer:
             return None
     
     async def _fetch_price_data(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
-        """Fetch OHLCV data from Binance"""
+        """Fetch OHLCV data - try CoinGecko first (no geo-block), fallback to Binance"""
+        
+        # Try CoinGecko first (no geo-restrictions)
+        df = await self._fetch_from_coingecko(symbol, limit)
+        if df is not None and len(df) >= 50:
+            return df
+        
+        # Fallback to Binance
+        df = await self._fetch_from_binance(symbol, limit)
+        return df
+    
+    async def _fetch_from_coingecko(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
+        """Fetch from CoinGecko API (no geo-restrictions)"""
         try:
-            # Convert symbol format (BTC/USDT -> BTCUSDT)
+            # Map symbol to CoinGecko ID
+            coin_map = {
+                "BTC/USDT": "bitcoin",
+                "ETH/USDT": "ethereum",
+                "BNB/USDT": "binancecoin",
+                "SOL/USDT": "solana"
+            }
+            coin_id = coin_map.get(symbol, "bitcoin")
+            
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # Get OHLC data (1 day, 4h candles)
+                response = await client.get(
+                    f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc",
+                    params={"vs_currency": "usd", "days": "7"}
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # CoinGecko format: [timestamp, open, high, low, close]
+                    df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close'])
+                    df['volume'] = 0  # CoinGecko OHLC doesn't include volume
+                    
+                    logger.info(f"CoinGecko: Got {len(df)} candles for {coin_id}")
+                    return df
+                else:
+                    logger.warning(f"CoinGecko API error: {response.status_code}")
+                    return None
+                    
+        except Exception as e:
+            logger.warning(f"CoinGecko fetch failed: {e}")
+            return None
+    
+    async def _fetch_from_binance(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
+        """Fetch OHLCV data from Binance (may be geo-blocked)"""
+        try:
             binance_symbol = symbol.replace("/", "")
             
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -168,7 +214,7 @@ class TechnicalAnalyzer:
                     f"https://api.binance.com/api/v3/klines",
                     params={
                         "symbol": binance_symbol,
-                        "interval": "15m",  # 15-minute candles
+                        "interval": "15m",
                         "limit": limit
                     }
                 )
@@ -181,17 +227,17 @@ class TechnicalAnalyzer:
                         'taker_buy_quote', 'ignore'
                     ])
                     
-                    # Convert to numeric
                     for col in ['open', 'high', 'low', 'close', 'volume']:
                         df[col] = pd.to_numeric(df[col])
                     
+                    logger.info(f"Binance: Got {len(df)} candles")
                     return df
                 else:
-                    logger.error(f"Binance API error: {response.status_code}")
+                    logger.warning(f"Binance API error: {response.status_code}")
                     return None
                     
         except Exception as e:
-            logger.error(f"Failed to fetch price data: {e}")
+            logger.warning(f"Binance fetch failed: {e}")
             return None
     
     def _compute_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
