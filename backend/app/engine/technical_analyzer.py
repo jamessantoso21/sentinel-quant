@@ -47,7 +47,7 @@ class TechnicalAnalyzer:
             # Fetch recent price data
             logger.info(f"Fetching price data for {symbol}")
             df = await self._fetch_price_data(symbol)
-            if df is None or len(df) < 50:
+            if df is None or len(df) < 40:  # CoinGecko provides ~42 candles
                 logger.warning(f"Insufficient price data for analysis: {len(df) if df is not None else 0} rows")
                 return None
             
@@ -162,7 +162,7 @@ class TechnicalAnalyzer:
         
         # Try CoinGecko first (no geo-restrictions)
         df = await self._fetch_from_coingecko(symbol, limit)
-        if df is not None and len(df) >= 50:
+        if df is not None and len(df) >= 40:  # CoinGecko provides ~42 candles
             return df
         
         # Fallback to Binance
