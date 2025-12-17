@@ -62,4 +62,11 @@ async def detailed_health_check():
         "confidence_threshold": settings.CONFIDENCE_THRESHOLD
     }
     
+    # Dify status
+    results["dify"] = {
+        "configured": bool(settings.DIFY_API_KEY and settings.DIFY_API_URL),
+        "api_url": settings.DIFY_API_URL[:50] if settings.DIFY_API_URL else None,
+        "api_key_set": bool(settings.DIFY_API_KEY)
+    }
+    
     return results
