@@ -1,0 +1,22 @@
+# Training Dependencies for Sentinel Quant
+# Run: pip install -r requirements_training.txt
+
+# PyTorch with CUDA support
+# For Windows with CUDA: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# RL Libraries
+stable-baselines3>=2.0.0
+gymnasium>=0.29.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# HTTP client
+httpx>=0.24.0
+
+# Progress bar
+tqdm>=4.65.0

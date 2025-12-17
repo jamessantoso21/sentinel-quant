@@ -159,33 +159,71 @@ class MultiModelVoter:
     def _get_lstm_vote(self, prediction: Optional[float]) -> Vote:
         """
         Convert LSTM prediction to vote.
-        PLACEHOLDER: Returns ABSTAIN until model is trained.
+        Uses trained model if available.
         """
-        # TODO: When LSTM is trained, this will return actual predictions
+        if prediction is None:
+            return Vote(
+                voter_name="LSTM Prediction",
+                vote=VoteType.ABSTAIN,
+                confidence=0.0,
+                reasoning="No LSTM prediction available",
+                is_active=False
+            )
+        
         # prediction > 0 = price going up = BUY
         # prediction < 0 = price going down = SELL
+        confidence = min(abs(prediction), 1.0)
+        
+        if prediction > 0.1:
+            vote_type = VoteType.BUY
+            reason = f"LSTM predicts UP ({prediction:+.2f})"
+        elif prediction < -0.1:
+            vote_type = VoteType.SELL
+            reason = f"LSTM predicts DOWN ({prediction:+.2f})"
+        else:
+            vote_type = VoteType.HOLD
+            reason = f"LSTM uncertain ({prediction:+.2f})"
         
         return Vote(
             voter_name="LSTM Prediction",
-            vote=VoteType.ABSTAIN,
-            confidence=0.0,
-            reasoning="Model not trained yet",
-            is_active=False
+            vote=vote_type,
+            confidence=confidence,
+            reasoning=reason,
+            is_active=True
         )
     
     def _get_ppo_vote(self, action: Optional[str]) -> Vote:
         """
         Convert PPO action to vote.
-        PLACEHOLDER: Returns ABSTAIN until model is trained.
+        Uses trained model if available.
         """
-        # TODO: When PPO is trained, this will return actual actions
+        if action is None:
+            return Vote(
+                voter_name="PPO Agent",
+                vote=VoteType.ABSTAIN,
+                confidence=0.0,
+                reasoning="No PPO action available",
+                is_active=False
+            )
+        
+        # Map PPO action to vote
+        action = action.upper()
+        if action == "BUY":
+            vote_type = VoteType.BUY
+            reason = "PPO recommends BUY"
+        elif action == "SELL":
+            vote_type = VoteType.SELL
+            reason = "PPO recommends SELL"
+        else:
+            vote_type = VoteType.HOLD
+            reason = "PPO recommends HOLD"
         
         return Vote(
             voter_name="PPO Agent",
-            vote=VoteType.ABSTAIN,
-            confidence=0.0,
-            reasoning="Model not trained yet",
-            is_active=False
+            vote=vote_type,
+            confidence=0.7,  # Fixed confidence for trained model
+            reasoning=reason,
+            is_active=True
         )
     
     def _aggregate_votes(self, votes: List[Vote]) -> VotingResult:
