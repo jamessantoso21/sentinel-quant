@@ -1,11 +1,12 @@
 """
 Sentinel Quant - Trading Engine
 Background trading loop with Dify sentiment analysis
+Multi-symbol support: BTC, PAXG (Gold)
 """
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import httpx
 import json
 
@@ -13,13 +14,21 @@ from core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Supported trading pairs
+TRADING_SYMBOLS = [
+    "BTC/USDT",   # Bitcoin
+    "PAXG/USDT",  # Pax Gold (Gold-backed token)
+]
+
 
 class TradingEngine:
     """Main trading engine that runs the trading loop"""
     
     def __init__(self):
         self.is_running = False
-        self.current_symbol = "BTC/USDT"
+        self.symbols = TRADING_SYMBOLS
+        self.current_symbol_index = 0
+        self.current_symbol = self.symbols[0]
         self.last_signal_time: Optional[datetime] = None
         self.last_sentiment: Optional[Dict] = None
         self.last_ai_prediction: Optional[float] = None
@@ -31,16 +40,20 @@ class TradingEngine:
             return
             
         self.is_running = True
-        logger.info("Trading engine started")
+        logger.info(f"Trading engine started - Symbols: {self.symbols}")
         
         while self.is_running:
             try:
-                await self._trading_cycle()
+                # Cycle through all symbols
+                for symbol in self.symbols:
+                    self.current_symbol = symbol
+                    await self._trading_cycle()
+                    await asyncio.sleep(10)  # Small delay between symbols
             except Exception as e:
                 logger.error(f"Trading cycle error: {e}")
             
-            # Wait 5 minutes between cycles
-            await asyncio.sleep(300)
+            # Wait 5 minutes between full cycles
+            await asyncio.sleep(290)  # 290 + 10*2 = 310 seconds total
     
     def stop(self):
         """Stop the trading loop"""

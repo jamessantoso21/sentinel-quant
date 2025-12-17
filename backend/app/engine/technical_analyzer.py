@@ -177,7 +177,8 @@ class TechnicalAnalyzer:
                 "BTC/USDT": "bitcoin",
                 "ETH/USDT": "ethereum",
                 "BNB/USDT": "binancecoin",
-                "SOL/USDT": "solana"
+                "SOL/USDT": "solana",
+                "PAXG/USDT": "pax-gold"  # Gold-backed token
             }
             coin_id = coin_map.get(symbol, "bitcoin")
             
