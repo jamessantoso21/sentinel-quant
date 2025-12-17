@@ -216,12 +216,12 @@ class TradingEngine:
                         self._open_position(self.current_symbol, action, entry_price)
                     
                     await self._execute_trade(action, confidence)
-            else:
-                add_activity(
-                    "TRADE_SKIPPED",
-                    f"Trading disabled. Voting: {voting_result.buy_votes}B/{voting_result.sell_votes}S/{voting_result.hold_votes}H",
-                    traded=False
-                )
+                else:
+                    add_activity(
+                        "TRADE_SKIPPED",
+                        f"Trading disabled. Voting: {voting_result.buy_votes}B/{voting_result.sell_votes}S/{voting_result.hold_votes}H",
+                        traded=False
+                    )
         else:
             add_activity(
                 "NO_TRADE",
