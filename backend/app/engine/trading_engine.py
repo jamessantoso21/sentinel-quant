@@ -58,8 +58,9 @@ class TradingEngine:
         sentiment = await self._get_sentiment()
         if sentiment:
             self.last_sentiment = sentiment
-            bot_state["current_sentiment"] = sentiment.get("sentiment")
-            bot_state["current_confidence"] = sentiment.get("confidence")
+            # Store score (float) not sentiment label (string) for BotStatus schema
+            bot_state["current_sentiment"] = sentiment.get("score", 0.0)
+            bot_state["current_confidence"] = sentiment.get("confidence", 0.5)
             add_activity(
                 "SENTIMENT_ANALYSIS",
                 f"Dify: {sentiment.get('sentiment')} (score: {sentiment.get('score', 0):.2f}, confidence: {sentiment.get('confidence', 0):.2f})",
