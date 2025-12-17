@@ -457,7 +457,7 @@ class TradingEngine:
         
         try:
             from services.exchange.binance import BinanceExchange
-            from db.session import async_session
+            from db.session import AsyncSessionLocal
             from db.repositories.trade import TradeRepository
             
             exchange = BinanceExchange()
@@ -482,7 +482,7 @@ class TradingEngine:
                 logger.info(f"BUY order placed: {order}")
                 
                 # Record trade in database
-                async with async_session() as db:
+                async with AsyncSessionLocal() as db:
                     trade_repo = TradeRepository(db)
                     await trade_repo.create(
                         user_id=1,  # Default user for bot trades
