@@ -452,56 +452,49 @@ class TradingEngine:
         return min(combined, 1.0)
     
     async def _execute_trade(self, signal: str, confidence: float):
-        """Execute trade on exchange"""
+        """Execute trade (paper trading mode - saves to database without real exchange)"""
         logger.info(f"Executing {signal} trade with confidence {confidence:.2f}")
         
         try:
-            from services.exchange.binance import BinanceExchange
             from db.session import AsyncSessionLocal
             from db.repositories.trade import TradeRepository
             
-            exchange = BinanceExchange()
+            # Get current price from our cached method
+            price = await self._get_current_price(self.current_symbol)
+            if not price:
+                logger.error("Could not get current price for trade")
+                return
             
             # Calculate position size based on confidence
             position_size = settings.MAX_POSITION_SIZE_USDT * min(confidence, 1.0)
+            quantity = position_size / price
             
-            if signal == "BUY":
-                # Get current price
-                ticker = await exchange.fetch_ticker(self.current_symbol)
-                price = ticker["last"]
-                quantity = position_size / price
-                
-                # Place order
-                order = await exchange.create_order(
+            # Generate simulated order ID
+            import uuid
+            order_id = f"PAPER_{uuid.uuid4().hex[:12].upper()}"
+            
+            logger.info(f"PAPER TRADE: {signal} {quantity:.6f} {self.current_symbol} @ ${price:.2f}")
+            
+            # Record trade in database
+            async with AsyncSessionLocal() as db:
+                trade_repo = TradeRepository(db)
+                await trade_repo.create(
+                    user_id=1,  # Default user for bot trades
                     symbol=self.current_symbol,
-                    order_type="market",
-                    side="buy",
-                    quantity=quantity
+                    side=signal.lower(),
+                    quantity=quantity,
+                    price=price,
+                    order_id=order_id,
+                    ai_confidence=confidence,
+                    sentiment_score=self.last_sentiment.get("score") if self.last_sentiment else None
                 )
-                
-                logger.info(f"BUY order placed: {order}")
-                
-                # Record trade in database
-                async with AsyncSessionLocal() as db:
-                    trade_repo = TradeRepository(db)
-                    await trade_repo.create(
-                        user_id=1,  # Default user for bot trades
-                        symbol=self.current_symbol,
-                        side="buy",
-                        quantity=quantity,
-                        price=price,
-                        order_id=order.get("id"),
-                        ai_confidence=confidence,
-                        sentiment_score=self.last_sentiment.get("score") if self.last_sentiment else None
-                    )
-                    await db.commit()
-                    
-            elif signal == "SELL":
-                # Similar logic for sell
-                pass
+                await db.commit()
+                logger.info(f"Trade saved to database: {order_id}")
                 
         except Exception as e:
             logger.error(f"Trade execution failed: {e}")
+            import traceback
+            traceback.print_exc()
     
     async def _check_tp_sl(self, symbol: str, current_price: float) -> Optional[str]:
         """
