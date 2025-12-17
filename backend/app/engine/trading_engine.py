@@ -117,48 +117,62 @@ class TradingEngine:
         else:
             add_activity("TECHNICAL_ANALYSIS", "Failed to get technical data", traded=False)
         
-        # 3. Enhanced Decision Logic (Confluence)
-        decision = self._make_enhanced_decision(sentiment, technical)
+        # 3. Multi-Model Voting (4 voters)
+        from engine.multi_voter import multi_voter
         
-        action = decision["action"]
-        confidence = decision["confidence"]
-        reasoning = decision["reasoning"]
-        market_condition = decision["market_condition"]
+        voting_result = multi_voter.vote(
+            sentiment_data=sentiment,
+            technical_data=technical,
+            lstm_prediction=None,  # Not trained yet
+            ppo_action=None        # Not trained yet
+        )
         
-        # 3.5 Apply SMA trust factor to confidence (fake pump protection)
-        if sentiment and "trust_check" in dir():
-            trust_score = trust_check.get("trust_score", 1.0)
-            if trust_score < 0.5:
-                # Reduce confidence for untrusted sentiment (possible fake pump)
-                original_confidence = confidence
-                confidence = confidence * trust_score
-                logger.warning(f"Confidence reduced: {original_confidence:.2f} -> {confidence:.2f} (trust={trust_score:.2f})")
-                reasoning += f" [Trust penalty: {trust_score:.0%}]"
+        # Log voting result
+        add_activity(
+            "VOTING",
+            f"Result: {voting_result.final_action} ({voting_result.consensus_level:.0%} consensus, {voting_result.active_voters}/{voting_result.total_voters} active)",
+            traded=False
+        )
+        logger.info(f"Voting: {voting_result.reasoning}")
+        
+        action = voting_result.final_action
+        confidence = voting_result.consensus_level
+        reasoning = voting_result.reasoning
+        market_condition = f"VOTE_{voting_result.final_action}"
+        
+        # Store in bot_state
+        bot_state["voting_result"] = {
+            "action": action,
+            "consensus": voting_result.consensus_level,
+            "active_voters": voting_result.active_voters,
+            "buy_votes": voting_result.buy_votes,
+            "sell_votes": voting_result.sell_votes
+        }
         
         bot_state["last_signal"] = action
         bot_state["market_condition"] = market_condition
         
-        # 4. Execute based on decision
-        if action in ["BUY", "SELL"] and confidence >= settings.CONFIDENCE_THRESHOLD:
-            logger.info(f"Trade signal: {action} with confidence {confidence:.2f}")
+        # 4. Execute based on voting result
+        if voting_result.should_trade and action in ["BUY", "SELL"]:
+            logger.info(f"Trade signal: {action} with consensus {confidence:.0%}")
             
             if settings.TRADING_ENABLED:
                 add_activity(
                     f"TRADE_{action}",
-                    f"{market_condition}: {reasoning} (confidence: {confidence:.2f})",
+                    f"Voting: {voting_result.buy_votes}B/{voting_result.sell_votes}S/{voting_result.hold_votes}H | {reasoning}",
                     traded=True
                 )
                 await self._execute_trade(action, confidence)
             else:
                 add_activity(
                     "TRADE_SKIPPED",
-                    f"Trading disabled. {market_condition}: {reasoning}",
+                    f"Trading disabled. Voting: {voting_result.buy_votes}B/{voting_result.sell_votes}S/{voting_result.hold_votes}H",
                     traded=False
                 )
         else:
             add_activity(
                 "NO_TRADE",
-                f"{market_condition}: {reasoning} (confidence: {confidence:.2f} vs threshold: {settings.CONFIDENCE_THRESHOLD})",
+                f"Voting: {voting_result.buy_votes}B/{voting_result.sell_votes}S/{voting_result.hold_votes}H (consensus: {confidence:.0%}) | {reasoning}",
                 traded=False
             )
             logger.info(f"No trade - {reasoning}")
