@@ -25,12 +25,12 @@ ASSET_SETTINGS = {
     "BTC/USDT": {
         "stop_loss": 0.02,       # 2% SL (from BTC backtest: 13.9% return)
         "take_profit": 0.04,    # 4% TP
-        "consensus": 0.25,       # 25% consensus
+        "consensus": 0.0,       # TESTING: 0% = any vote triggers trade
     },
     "PAXG/USDT": {
         "stop_loss": 0.01,       # 1% SL (from PAXG backtest: 9.05% return)
         "take_profit": 0.015,   # 1.5% TP (tighter for gold)
-        "consensus": 0.25,       # 25% consensus
+        "consensus": 0.0,       # TESTING: 0% = any vote triggers trade
     },
 }
 
