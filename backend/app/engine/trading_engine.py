@@ -20,10 +20,33 @@ TRADING_SYMBOLS = [
     "PAXG/USDT",  # Pax Gold (Gold-backed token)
 ]
 
-# TP/SL Configuration (from backtest optimization)
-STOP_LOSS_PERCENT = 0.02    # 2% stop loss
-TAKE_PROFIT_PERCENT = 0.04  # 4% take profit
+# Per-Asset TP/SL Configuration (from grid search optimization)
+ASSET_SETTINGS = {
+    "BTC/USDT": {
+        "stop_loss": 0.02,       # 2% SL (from BTC backtest: 13.9% return)
+        "take_profit": 0.04,    # 4% TP
+        "consensus": 0.25,       # 25% consensus
+    },
+    "PAXG/USDT": {
+        "stop_loss": 0.01,       # 1% SL (from PAXG backtest: 9.05% return)
+        "take_profit": 0.015,   # 1.5% TP (tighter for gold)
+        "consensus": 0.25,       # 25% consensus
+    },
+}
+
+# Default settings (fallback)
+DEFAULT_STOP_LOSS = 0.02
+DEFAULT_TAKE_PROFIT = 0.04
 POSITION_SIZE_PERCENT = 0.10  # 10% of capital per trade
+
+
+def get_asset_settings(symbol: str) -> dict:
+    """Get optimized settings for a specific asset"""
+    return ASSET_SETTINGS.get(symbol, {
+        "stop_loss": DEFAULT_STOP_LOSS,
+        "take_profit": DEFAULT_TAKE_PROFIT,
+        "consensus": 0.25,
+    })
 
 
 class TradingEngine:
@@ -486,6 +509,11 @@ class TradingEngine:
         entry_price = position['entry_price']
         side = position['side']
         
+        # Get per-asset settings
+        settings = get_asset_settings(symbol)
+        stop_loss = settings['stop_loss']
+        take_profit = settings['take_profit']
+        
         # Calculate P&L percentage
         if side == 'BUY':
             pnl_pct = (current_price - entry_price) / entry_price
@@ -493,7 +521,7 @@ class TradingEngine:
             pnl_pct = (entry_price - current_price) / entry_price
         
         # Check TP/SL
-        if pnl_pct <= -STOP_LOSS_PERCENT:
+        if pnl_pct <= -stop_loss:
             logger.info(f"STOP LOSS triggered for {symbol}: {pnl_pct*100:.2f}%")
             add_activity(
                 "STOP_LOSS",
@@ -503,7 +531,7 @@ class TradingEngine:
             del self.positions[symbol]
             return 'SL'
         
-        elif pnl_pct >= TAKE_PROFIT_PERCENT:
+        elif pnl_pct >= take_profit:
             logger.info(f"TAKE PROFIT triggered for {symbol}: {pnl_pct*100:.2f}%")
             add_activity(
                 "TAKE_PROFIT",
@@ -514,19 +542,24 @@ class TradingEngine:
             return 'TP'
         
         else:
-            logger.debug(f"Position {symbol}: P&L = {pnl_pct*100:.2f}% (TP: +{TAKE_PROFIT_PERCENT*100}%, SL: -{STOP_LOSS_PERCENT*100}%)")
+            logger.debug(f"Position {symbol}: P&L = {pnl_pct*100:.2f}% (TP: +{take_profit*100}%, SL: -{stop_loss*100}%)")
             return None
     
     def _open_position(self, symbol: str, side: str, entry_price: float):
-        """Record a new position"""
+        """Record a new position with per-asset TP/SL"""
         from api.v1.endpoints.bot import add_activity
+        
+        # Get per-asset settings
+        settings = get_asset_settings(symbol)
+        stop_loss = settings['stop_loss']
+        take_profit = settings['take_profit']
         
         self.positions[symbol] = {
             'side': side,
             'entry_price': entry_price,
             'entry_time': datetime.now(timezone.utc),
-            'tp_price': entry_price * (1 + TAKE_PROFIT_PERCENT) if side == 'BUY' else entry_price * (1 - TAKE_PROFIT_PERCENT),
-            'sl_price': entry_price * (1 - STOP_LOSS_PERCENT) if side == 'BUY' else entry_price * (1 + STOP_LOSS_PERCENT),
+            'tp_price': entry_price * (1 + take_profit) if side == 'BUY' else entry_price * (1 - take_profit),
+            'sl_price': entry_price * (1 - stop_loss) if side == 'BUY' else entry_price * (1 + stop_loss),
         }
         
         pos = self.positions[symbol]
