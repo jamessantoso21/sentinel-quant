@@ -23,6 +23,7 @@ COIN_MAP = {
     "DOT": "polkadot",
     "AVAX": "avalanche-2",
     "MATIC": "matic-network",
+    "PAXG": "pax-gold",  # Gold-backed token
 }
 
 # Simple cache to avoid rate limits (CoinGecko: 10-30 req/min on free tier)
