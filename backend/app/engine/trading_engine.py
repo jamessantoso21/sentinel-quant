@@ -475,18 +475,28 @@ class TradingEngine:
             
             logger.info(f"PAPER TRADE: {signal} {quantity:.6f} {self.current_symbol} @ ${price:.2f}")
             
+            # Get per-asset settings for SL/TP
+            settings_asset = get_asset_settings(self.current_symbol)
+            sl_price = price * (1 - settings_asset['stop_loss']) if signal == "BUY" else price * (1 + settings_asset['stop_loss'])
+            tp_price = price * (1 + settings_asset['take_profit']) if signal == "BUY" else price * (1 - settings_asset['take_profit'])
+            
             # Record trade in database
             async with AsyncSessionLocal() as db:
                 trade_repo = TradeRepository(db)
                 await trade_repo.create(
                     user_id=1,  # Default user for bot trades
                     symbol=self.current_symbol,
-                    side=signal.lower(),
+                    direction="LONG" if signal == "BUY" else "SHORT",
+                    status="EXECUTED",
+                    entry_price=price,
                     quantity=quantity,
-                    price=price,
-                    order_id=order_id,
+                    stop_loss=sl_price,
+                    take_profit=tp_price,
                     ai_confidence=confidence,
-                    sentiment_score=self.last_sentiment.get("score") if self.last_sentiment else None
+                    sentiment_score=self.last_sentiment.get("score") if self.last_sentiment else None,
+                    exchange="paper",
+                    exchange_order_id=order_id,
+                    notes=f"Paper trade via bot"
                 )
                 await db.commit()
                 logger.info(f"Trade saved to database: {order_id}")
