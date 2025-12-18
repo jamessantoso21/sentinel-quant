@@ -681,6 +681,11 @@ class TradingEngine:
                 self.sol_entry_price = current_price
                 self.sol_in_position = True
                 
+                # Update bot_state for monitoring
+                bot_state["sol_in_position"] = True
+                bot_state["sol_entry_price"] = current_price
+                bot_state["sol_pnl"] = 0.0
+                
                 # Record position
                 self.positions["SOL/USDT"] = {
                     'side': 'BUY',
@@ -702,6 +707,11 @@ class TradingEngine:
                 self.sol_entry_price = 0.0
                 self.sol_in_position = False
                 
+                # Update bot_state for monitoring
+                bot_state["sol_in_position"] = False
+                bot_state["sol_entry_price"] = None
+                bot_state["sol_pnl"] = None
+                
                 # Clear position
                 if "SOL/USDT" in self.positions:
                     del self.positions["SOL/USDT"]
@@ -712,6 +722,10 @@ class TradingEngine:
                 add_activity("SOL_SELL_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
         
         else:
+            # HOLD - update PnL if in position
+            if self.sol_in_position and self.sol_entry_price > 0:
+                pnl = (current_price - self.sol_entry_price) / self.sol_entry_price * 100
+                bot_state["sol_pnl"] = round(pnl, 2)
             logger.debug(f"SOL HOLD: {signal.reason}")
 
 

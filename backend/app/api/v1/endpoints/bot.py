@@ -28,7 +28,14 @@ bot_state = {
     "current_confidence": None,
     "current_sentiment": None,
     "voting_result": None,  # Voting details for UI
-    "activity_log": []  # Store recent activity
+    "activity_log": [],  # Store recent activity
+    
+    # SOL Trend Engine State (+303% optimized)
+    "sol_trend": None,        # Current trend: UPTREND, DOWNTREND, RANGE
+    "sol_action": None,       # Last action: BUY, SELL, HOLD
+    "sol_in_position": False, # Is SOL position open?
+    "sol_entry_price": None,  # Entry price if in position
+    "sol_pnl": None,          # Current unrealized PnL %
 }
 
 
@@ -56,7 +63,48 @@ async def get_bot_activity(current_user: CurrentUser, limit: int = 20):
         "current_confidence": bot_state.get("current_confidence"),
         "current_sentiment": bot_state.get("current_sentiment"),
         "voting_result": bot_state.get("voting_result"),
-        "activity_log": bot_state["activity_log"][:limit]
+        "activity_log": bot_state["activity_log"][:limit],
+        
+        # SOL Trend Engine Status
+        "sol": {
+            "trend": bot_state.get("sol_trend"),
+            "action": bot_state.get("sol_action"),
+            "in_position": bot_state.get("sol_in_position", False),
+            "entry_price": bot_state.get("sol_entry_price"),
+            "pnl_percent": bot_state.get("sol_pnl"),
+        }
+    }
+
+
+@router.get("/sol-status")
+async def get_sol_status(current_user: CurrentUser):
+    """Get SOL Trend Engine status (optimized +303% strategy)"""
+    from engine.trading_engine import trading_engine
+    
+    # Get live price
+    sol_price = await trading_engine._get_current_price("SOL/USDT")
+    
+    # Calculate PnL if in position
+    pnl = None
+    if trading_engine.sol_in_position and trading_engine.sol_entry_price > 0 and sol_price:
+        pnl = (sol_price - trading_engine.sol_entry_price) / trading_engine.sol_entry_price * 100
+    
+    return {
+        "symbol": "SOL/USDT",
+        "strategy": "TREND_FOLLOWING (+303% backtested)",
+        "current_price": sol_price,
+        "trend": bot_state.get("sol_trend", "UNKNOWN"),
+        "action": bot_state.get("sol_action", "HOLD"),
+        "in_position": trading_engine.sol_in_position,
+        "entry_price": trading_engine.sol_entry_price if trading_engine.sol_in_position else None,
+        "unrealized_pnl_percent": round(pnl, 2) if pnl else None,
+        "config": {
+            "trend_confirm_hours": 72,
+            "cooldown_hours": 48,
+            "rsi_top": 75,
+            "profit_target": "40%",
+            "position_size": "80%"
+        }
     }
 
 
