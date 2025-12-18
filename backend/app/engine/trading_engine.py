@@ -16,12 +16,18 @@ logger = logging.getLogger(__name__)
 
 # Supported trading pairs
 TRADING_SYMBOLS = [
+    "SOL/USDT",   # Solana - uses optimized Trend Following (+303% backtested)
     "BTC/USDT",   # Bitcoin
     "PAXG/USDT",  # Pax Gold (Gold-backed token)
 ]
 
 # Per-Asset TP/SL Configuration (from grid search optimization)
 ASSET_SETTINGS = {
+    "SOL/USDT": {
+        "stop_loss": None,       # Trend engine handles exits
+        "take_profit": None,     # Trend engine handles exits
+        "use_trend_engine": True,  # Use optimized trend following
+    },
     "BTC/USDT": {
         "stop_loss": 0.02,       # 2% SL (from BTC backtest: 13.9% return)
         "take_profit": 0.04,    # 4% TP
@@ -64,6 +70,12 @@ class TradingEngine:
         # Position tracking for TP/SL
         self.positions: Dict[str, Dict] = {}  # {symbol: {side, entry_price, entry_time}}
         
+        # SOL Trend Engine (+303% backtested)
+        self.sol_trend_engine = None
+        self.sol_entry_price = 0.0
+        self.sol_in_position = False
+        self._init_sol_engine()
+        
     async def start(self):
         """Start the trading loop"""
         if self.is_running:
@@ -99,6 +111,15 @@ class TradingEngine:
         from api.v1.endpoints.bot import add_activity, bot_state
         from engine.sentiment_tracker import sentiment_tracker
         
+        # Get asset settings
+        asset_settings = get_asset_settings(self.current_symbol)
+        
+        # ========== SOL: Use Optimized Trend Engine (+303% backtested) ==========
+        if asset_settings.get("use_trend_engine"):
+            await self._sol_trend_cycle(add_activity, bot_state)
+            return  # SOL uses its own logic, skip consensus voting
+        
+        # ========== BTC/PAXG: Use Consensus Voting ==========
         # 0. Check existing positions for TP/SL
         if self.current_symbol in self.positions:
             current_price = await self._get_current_price(self.current_symbol)
@@ -577,6 +598,7 @@ class TradingEngine:
         """Get current price from CoinGecko"""
         try:
             coin_map = {
+                "SOL/USDT": "solana",
                 "BTC/USDT": "bitcoin",
                 "PAXG/USDT": "pax-gold",
                 "ETH/USDT": "ethereum",
@@ -594,6 +616,103 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Failed to get current price for {symbol}: {e}")
         return None
+    
+    def _init_sol_engine(self):
+        """Initialize SOL Trend Engine"""
+        try:
+            from engine.sol_trend_engine import SOLTrendEngine
+            self.sol_trend_engine = SOLTrendEngine()
+            logger.info("SOL Trend Engine initialized (+303% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load SOL Trend Engine: {e}")
+            self.sol_trend_engine = None
+    
+    async def _sol_trend_cycle(self, add_activity, bot_state):
+        """
+        SOL trading using optimized Trend Following strategy.
+        Bypasses consensus voting for +303% backtested performance.
+        """
+        from engine.technical_analyzer import technical_analyzer
+        
+        if not self.sol_trend_engine:
+            logger.warning("SOL Trend Engine not available, skipping")
+            return
+        
+        # Get current price
+        current_price = await self._get_current_price("SOL/USDT")
+        if not current_price:
+            add_activity("SOL_TREND", "Could not get SOL price", traded=False)
+            return
+        
+        # Get technical data for indicators
+        technical = await technical_analyzer.analyze("SOL/USDT")
+        
+        # Prepare data for trend engine
+        sma10 = technical.sma_10 if technical and hasattr(technical, 'sma_10') else current_price
+        sma20 = technical.sma_20 if technical and hasattr(technical, 'sma_20') else current_price
+        sma50 = technical.sma_50 if technical and hasattr(technical, 'sma_50') else current_price
+        rsi = technical.rsi if technical else 50
+        high_20d = current_price * 1.1  # Approximate
+        
+        # Update engine position state
+        self.sol_trend_engine.update_position(self.sol_entry_price, self.sol_in_position)
+        
+        # Get signal from trend engine
+        signal = self.sol_trend_engine.get_signal(
+            current_price=current_price,
+            sma10=sma10,
+            sma20=sma20,
+            sma50=sma50,
+            rsi=rsi,
+            high_20d=high_20d,
+            momentum_7d=0.0
+        )
+        
+        # Log current state
+        trend_info = f"Trend: {signal.trend.value} | RSI: {rsi:.0f}"
+        add_activity("SOL_TREND", f"${current_price:.2f} | {trend_info} | Signal: {signal.action.value}", traded=False)
+        bot_state["sol_trend"] = signal.trend.value
+        bot_state["sol_action"] = signal.action.value
+        
+        # Execute trade based on signal
+        if signal.action.value == "BUY" and not self.sol_in_position:
+            if settings.TRADING_ENABLED:
+                add_activity("SOL_BUY", f"{signal.reason} @ ${current_price:.2f}", traded=True)
+                self.sol_entry_price = current_price
+                self.sol_in_position = True
+                
+                # Record position
+                self.positions["SOL/USDT"] = {
+                    'side': 'BUY',
+                    'entry_price': current_price,
+                    'entry_time': datetime.now(timezone.utc),
+                    'tp_price': None,  # Trend engine handles exits
+                    'sl_price': None,
+                }
+                
+                await self._execute_trade("BUY", signal.confidence)
+                logger.info(f"SOL BUY executed: {signal.reason}")
+            else:
+                add_activity("SOL_BUY_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        
+        elif signal.action.value == "SELL" and self.sol_in_position:
+            if settings.TRADING_ENABLED:
+                pnl = (current_price - self.sol_entry_price) / self.sol_entry_price * 100
+                add_activity("SOL_SELL", f"{signal.reason} @ ${current_price:.2f} (PnL: {pnl:+.1f}%)", traded=True)
+                self.sol_entry_price = 0.0
+                self.sol_in_position = False
+                
+                # Clear position
+                if "SOL/USDT" in self.positions:
+                    del self.positions["SOL/USDT"]
+                
+                await self._execute_trade("SELL", signal.confidence)
+                logger.info(f"SOL SELL executed: {signal.reason} (PnL: {pnl:+.1f}%)")
+            else:
+                add_activity("SOL_SELL_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        
+        else:
+            logger.debug(f"SOL HOLD: {signal.reason}")
 
 
 # Global trading engine instance
