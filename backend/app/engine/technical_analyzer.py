@@ -207,6 +207,12 @@ class TechnicalAnalyzer:
                 "SOL/USDT": "SOL",
                 "MATIC/USDT": "MATIC",
                 "DOGE/USDT": "DOGE",
+                "ADA/USDT": "ADA",
+                "FET/USDT": "FET",
+                "VET/USDT": "VET",
+                "ETC/USDT": "ETC",
+                "HBAR/USDT": "HBAR",
+                "AAVE/USDT": "AAVE",
                 "PAXG/USDT": "PAXG",
                 "BNB/USDT": "BNB",
             }
