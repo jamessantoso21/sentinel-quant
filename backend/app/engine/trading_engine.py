@@ -891,9 +891,13 @@ class TradingEngine:
                 self.sol_in_position = False
                 bot_state["sol_in_position"] = False
         else:
+            # Log the HOLD state for visibility
+            status = f"${current_price:.2f} | {signal.reason}"
             if self.sol_in_position and self.sol_entry_price > 0:
                 pnl = (current_price - self.sol_entry_price) / self.sol_entry_price * 100
                 bot_state["sol_pnl"] = round(pnl, 2)
+                status = f"${current_price:.2f} | PnL: {pnl:+.1f}% | {signal.reason}"
+            add_activity("SOL_BREAKOUT", status, traded=False)
     
     def _init_matic_timing_engine(self):
         """Initialize MATIC Market Timing Engine (+3810%)"""
@@ -937,9 +941,12 @@ class TradingEngine:
                 self.matic_in_position = False
                 bot_state["matic_in_position"] = False
         else:
+            status = f"${current_price:.4f} | {signal.reason}"
             if self.matic_in_position and self.matic_entry_price > 0:
                 pnl = (current_price - self.matic_entry_price) / self.matic_entry_price * 100
                 bot_state["matic_pnl"] = round(pnl, 2)
+                status = f"${current_price:.4f} | PnL: {pnl:+.1f}% | {signal.reason}"
+            add_activity("MATIC_TIMING", status, traded=False)
     
     # Legacy SOL/MATIC trend engines (deprecated)
     def _init_sol_engine(self):
@@ -1250,9 +1257,12 @@ class TradingEngine:
                 self.fet_in_position = False
                 bot_state["fet_in_position"] = False
         else:
+            status = f"${current_price:.4f} | {signal.reason}"
             if self.fet_in_position and self.fet_entry_price > 0:
                 pnl = (current_price - self.fet_entry_price) / self.fet_entry_price * 100
                 bot_state["fet_pnl"] = round(pnl, 2)
+                status = f"${current_price:.4f} | PnL: {pnl:+.1f}% | {signal.reason}"
+            add_activity("FET_BREAKOUT", status, traded=False)
     
     def _init_vet_breakout_engine(self):
         """Initialize VET Breakout Engine (+1237%)"""
@@ -1293,9 +1303,12 @@ class TradingEngine:
                 self.vet_in_position = False
                 bot_state["vet_in_position"] = False
         else:
+            status = f"${current_price:.6f} | {signal.reason}"
             if self.vet_in_position and self.vet_entry_price > 0:
                 pnl = (current_price - self.vet_entry_price) / self.vet_entry_price * 100
                 bot_state["vet_pnl"] = round(pnl, 2)
+                status = f"${current_price:.6f} | PnL: {pnl:+.1f}% | {signal.reason}"
+            add_activity("VET_BREAKOUT", status, traded=False)
     
     def _init_etc_breakout_engine(self):
         """Initialize ETC Breakout Engine (+542%)"""
@@ -1336,9 +1349,12 @@ class TradingEngine:
                 self.etc_in_position = False
                 bot_state["etc_in_position"] = False
         else:
+            status = f"${current_price:.2f} | {signal.reason}"
             if self.etc_in_position and self.etc_entry_price > 0:
                 pnl = (current_price - self.etc_entry_price) / self.etc_entry_price * 100
                 bot_state["etc_pnl"] = round(pnl, 2)
+                status = f"${current_price:.2f} | PnL: {pnl:+.1f}% | {signal.reason}"
+            add_activity("ETC_BREAKOUT", status, traded=False)
     
     def _init_hbar_breakout_engine(self):
         """Initialize HBAR Breakout Engine (+1562%)"""
@@ -1379,9 +1395,12 @@ class TradingEngine:
                 self.hbar_in_position = False
                 bot_state["hbar_in_position"] = False
         else:
+            status = f"${current_price:.4f} | {signal.reason}"
             if self.hbar_in_position and self.hbar_entry_price > 0:
                 pnl = (current_price - self.hbar_entry_price) / self.hbar_entry_price * 100
                 bot_state["hbar_pnl"] = round(pnl, 2)
+                status = f"${current_price:.4f} | PnL: {pnl:+.1f}% | {signal.reason}"
+            add_activity("HBAR_BREAKOUT", status, traded=False)
     
     # Legacy FET trend engine (deprecated - now using breakout)
     def _init_fet_engine(self):
@@ -1603,9 +1622,12 @@ class TradingEngine:
             else:
                 add_activity("BTC_SELL_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
         else:
+            status = f"${current_price:.2f} | {signal.reason}"
             if self.btc_in_position and self.btc_entry_price > 0:
                 pnl = (current_price - self.btc_entry_price) / self.btc_entry_price * 100
                 bot_state["btc_pnl"] = round(pnl, 2)
+                status = f"${current_price:.2f} | PnL: {pnl:+.1f}% | {signal.reason}"
+            add_activity("BTC_TIMING", status, traded=False)
             logger.debug(f"BTC HOLD: {signal.reason}")
 
 
