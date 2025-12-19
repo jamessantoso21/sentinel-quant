@@ -50,6 +50,13 @@ bot_state = {
     "doge_in_position": False,
     "doge_entry_price": None,
     "doge_pnl": None,
+    
+    # ADA Trend Engine State (+1195% optimized)
+    "ada_trend": None,
+    "ada_action": None,
+    "ada_in_position": False,
+    "ada_entry_price": None,
+    "ada_pnl": None,
 }
 
 
@@ -104,6 +111,15 @@ async def get_bot_activity(current_user: CurrentUser, limit: int = 20):
             "in_position": bot_state.get("doge_in_position", False),
             "entry_price": bot_state.get("doge_entry_price"),
             "pnl_percent": bot_state.get("doge_pnl"),
+        },
+        
+        # ADA Trend Engine Status
+        "ada": {
+            "trend": bot_state.get("ada_trend"),
+            "action": bot_state.get("ada_action"),
+            "in_position": bot_state.get("ada_in_position", False),
+            "entry_price": bot_state.get("ada_entry_price"),
+            "pnl_percent": bot_state.get("ada_pnl"),
         }
     }
 

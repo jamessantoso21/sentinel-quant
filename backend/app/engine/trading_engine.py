@@ -19,6 +19,7 @@ TRADING_SYMBOLS = [
     "SOL/USDT",   # Solana - uses optimized Trend Following (+303% backtested)
     "MATIC/USDT", # Polygon - uses optimized Trend Following (+3084% backtested)
     "DOGE/USDT",  # Dogecoin - uses optimized Trend Following (+33723% backtested)
+    "ADA/USDT",   # Cardano - uses optimized Trend Following (+1195% backtested)
     "BTC/USDT",   # Bitcoin
     "PAXG/USDT",  # Pax Gold (Gold-backed token)
 ]
@@ -39,6 +40,11 @@ ASSET_SETTINGS = {
         "stop_loss": None,       # Trend engine handles exits
         "take_profit": None,     # Trend engine handles exits
         "use_trend_engine": True,  # Use optimized trend following (+33723%)
+    },
+    "ADA/USDT": {
+        "stop_loss": None,       # Trend engine handles exits
+        "take_profit": None,     # Trend engine handles exits  
+        "use_trend_engine": True,  # Use optimized trend following (+1195%)
     },
     "BTC/USDT": {
         "stop_loss": 0.02,       # 2% SL (from BTC backtest: 13.9% return)
@@ -100,6 +106,12 @@ class TradingEngine:
         self.doge_in_position = False
         self._init_doge_engine()
         
+        # ADA Trend Engine (+1195% backtested)
+        self.ada_trend_engine = None
+        self.ada_entry_price = 0.0
+        self.ada_in_position = False
+        self._init_ada_engine()
+        
     async def start(self):
         """Start the trading loop"""
         if self.is_running:
@@ -146,6 +158,8 @@ class TradingEngine:
                 await self._matic_trend_cycle(add_activity, bot_state)
             elif self.current_symbol == "DOGE/USDT":
                 await self._doge_trend_cycle(add_activity, bot_state)
+            elif self.current_symbol == "ADA/USDT":
+                await self._ada_trend_cycle(add_activity, bot_state)
             return  # Trend coins use their own logic, skip consensus voting
         
         # ========== BTC/PAXG: Use Consensus Voting ==========
@@ -629,6 +643,7 @@ class TradingEngine:
             "SOL/USDT": "SOL",
             "MATIC/USDT": "MATIC", 
             "DOGE/USDT": "DOGE",
+            "ADA/USDT": "ADA",
             "BTC/USDT": "BTC",
             "PAXG/USDT": "PAXG",
             "ETH/USDT": "ETH",
@@ -637,6 +652,7 @@ class TradingEngine:
             "SOL/USDT": "solana",
             "MATIC/USDT": "matic-network",
             "DOGE/USDT": "dogecoin",
+            "ADA/USDT": "cardano",
             "BTC/USDT": "bitcoin",
             "PAXG/USDT": "pax-gold",
             "ETH/USDT": "ethereum",
@@ -976,6 +992,80 @@ class TradingEngine:
                 pnl = (current_price - self.doge_entry_price) / self.doge_entry_price * 100
                 bot_state["doge_pnl"] = round(pnl, 2)
             logger.debug(f"DOGE HOLD: {signal.reason}")
+    
+    def _init_ada_engine(self):
+        """Initialize ADA Trend Engine"""
+        try:
+            from engine.ada_trend_engine import ADATrendEngine
+            self.ada_trend_engine = ADATrendEngine()
+            logger.info("ADA Trend Engine initialized (+1195% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load ADA Trend Engine: {e}")
+            self.ada_trend_engine = None
+    
+    async def _ada_trend_cycle(self, add_activity, bot_state):
+        """ADA trading using optimized Trend Following strategy."""
+        from engine.technical_analyzer import technical_analyzer
+        
+        if not self.ada_trend_engine:
+            logger.warning("ADA Trend Engine not available, skipping")
+            return
+        
+        current_price = await self._get_current_price("ADA/USDT")
+        if not current_price:
+            add_activity("ADA_TREND", "Could not get ADA price", traded=False)
+            return
+        
+        technical = await technical_analyzer.analyze("ADA/USDT")
+        
+        sma10 = technical.sma_10 if technical and hasattr(technical, 'sma_10') else current_price
+        sma20 = technical.sma_20 if technical and hasattr(technical, 'sma_20') else current_price
+        sma50 = technical.sma_50 if technical and hasattr(technical, 'sma_50') else current_price
+        rsi = technical.rsi if technical else 50
+        high_20d = current_price * 1.1
+        
+        self.ada_trend_engine.update_position(self.ada_entry_price, self.ada_in_position)
+        
+        signal = self.ada_trend_engine.get_signal(
+            current_price=current_price, sma10=sma10, sma20=sma20, sma50=sma50,
+            rsi=rsi, high_20d=high_20d, momentum_7d=0.0
+        )
+        
+        bot_state["ada_trend"] = signal.trend.value
+        bot_state["ada_action"] = signal.action.value
+        
+        pnl = 0
+        if signal.action.value == "BUY" and not self.ada_in_position:
+            add_activity("ADA_BUY_SIGNAL", f"Trend: {signal.trend.value} | {signal.reason}", traded=False)
+            if TRADING_ENABLED:
+                self.ada_entry_price = current_price
+                self.ada_in_position = True
+                bot_state["ada_in_position"] = True
+                bot_state["ada_entry_price"] = current_price
+                await self._execute_trade("BUY", signal.confidence)
+                logger.info(f"ADA BUY executed at ${current_price:.4f}: {signal.reason}")
+            else:
+                add_activity("ADA_BUY_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        elif signal.action.value == "SELL" and self.ada_in_position:
+            pnl = (current_price - self.ada_entry_price) / self.ada_entry_price * 100
+            add_activity("ADA_SELL_SIGNAL", f"PnL: {pnl:+.1f}% | {signal.reason}", traded=False)
+            if TRADING_ENABLED:
+                self.ada_entry_price = 0.0
+                self.ada_in_position = False
+                bot_state["ada_in_position"] = False
+                bot_state["ada_entry_price"] = None
+                bot_state["ada_pnl"] = None
+                if "ADA/USDT" in self.positions:
+                    del self.positions["ADA/USDT"]
+                await self._execute_trade("SELL", signal.confidence)
+                logger.info(f"ADA SELL executed: {signal.reason} (PnL: {pnl:+.1f}%)")
+            else:
+                add_activity("ADA_SELL_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        else:
+            if self.ada_in_position and self.ada_entry_price > 0:
+                pnl = (current_price - self.ada_entry_price) / self.ada_entry_price * 100
+                bot_state["ada_pnl"] = round(pnl, 2)
+            logger.debug(f"ADA HOLD: {signal.reason}")
 
 
 # Global trading engine instance
