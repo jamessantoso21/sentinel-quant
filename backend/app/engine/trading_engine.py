@@ -16,47 +16,26 @@ logger = logging.getLogger(__name__)
 
 # Supported trading pairs
 TRADING_SYMBOLS = [
-    "SOL/USDT",   # Solana - uses optimized Trend Following (+303% backtested)
-    "MATIC/USDT", # Polygon - uses optimized Trend Following (+3084% backtested)
-    "DOGE/USDT",  # Dogecoin - uses optimized Trend Following (+33723% backtested)
-    "ADA/USDT",   # Cardano - uses optimized Trend Following (+1195% backtested)
-    "FET/USDT",   # Fetch.AI - uses optimized Trend Following (+368% backtested)
-    "BTC/USDT",   # Bitcoin - uses Market Timing (+7104% backtested)
-    # PAXG removed: Gold-backed token, not suitable for trend trading
+    "SOL/USDT",   # Solana - Trend Following (+303%)
+    "MATIC/USDT", # Polygon - Trend Following (+3084%)
+    "DOGE/USDT",  # Dogecoin - Trend Following (+33723%)
+    "ADA/USDT",   # Cardano - Trend Following (+1195%)
+    "FET/USDT",   # Fetch.AI - Trend Following (+368%)
+    "ETC/USDT",   # Ethereum Classic - Trend Following (+221%)
+    "AAVE/USDT",  # Aave - Trend Following (+787%)
+    "BTC/USDT",   # Bitcoin - Market Timing (+7104%)
 ]
 
 # Per-Asset Configuration
 ASSET_SETTINGS = {
-    "SOL/USDT": {
-        "stop_loss": None,
-        "take_profit": None,
-        "use_trend_engine": True,  # Trend following (+303%)
-    },
-    "MATIC/USDT": {
-        "stop_loss": None,
-        "take_profit": None,
-        "use_trend_engine": True,  # Trend following (+3084%)
-    },
-    "DOGE/USDT": {
-        "stop_loss": None,
-        "take_profit": None,
-        "use_trend_engine": True,  # Trend following (+33723%)
-    },
-    "ADA/USDT": {
-        "stop_loss": None,
-        "take_profit": None,
-        "use_trend_engine": True,  # Trend following (+1195%)
-    },
-    "FET/USDT": {
-        "stop_loss": None,
-        "take_profit": None,
-        "use_trend_engine": True,  # Trend following (+368%)
-    },
-    "BTC/USDT": {
-        "stop_loss": None,
-        "take_profit": None,
-        "use_timing_engine": True,  # Market timing (+7104%)
-    },
+    "SOL/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
+    "MATIC/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
+    "DOGE/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
+    "ADA/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
+    "FET/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
+    "ETC/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
+    "AAVE/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
+    "BTC/USDT": {"stop_loss": None, "take_profit": None, "use_timing_engine": True},
 }
 
 # Default settings (fallback)
@@ -119,6 +98,18 @@ class TradingEngine:
         self.fet_in_position = False
         self._init_fet_engine()
         
+        # ETC Trend Engine (+221% backtested)
+        self.etc_trend_engine = None
+        self.etc_entry_price = 0.0
+        self.etc_in_position = False
+        self._init_etc_engine()
+        
+        # AAVE Trend Engine (+787% backtested)
+        self.aave_trend_engine = None
+        self.aave_entry_price = 0.0
+        self.aave_in_position = False
+        self._init_aave_engine()
+        
         # BTC Market Timing Engine (+7104% backtested)
         self.btc_timing_engine = None
         self.btc_entry_price = 0.0
@@ -175,6 +166,10 @@ class TradingEngine:
                 await self._ada_trend_cycle(add_activity, bot_state)
             elif self.current_symbol == "FET/USDT":
                 await self._fet_trend_cycle(add_activity, bot_state)
+            elif self.current_symbol == "ETC/USDT":
+                await self._etc_trend_cycle(add_activity, bot_state)
+            elif self.current_symbol == "AAVE/USDT":
+                await self._aave_trend_cycle(add_activity, bot_state)
             return  # Trend coins use their own logic, skip consensus voting
         
         # ========== BTC: Use Market Timing Engine ==========
@@ -666,6 +661,8 @@ class TradingEngine:
             "DOGE/USDT": "DOGE",
             "ADA/USDT": "ADA",
             "FET/USDT": "FET",
+            "ETC/USDT": "ETC",
+            "AAVE/USDT": "AAVE",
             "BTC/USDT": "BTC",
             "PAXG/USDT": "PAXG",
             "ETH/USDT": "ETH",
@@ -676,6 +673,8 @@ class TradingEngine:
             "DOGE/USDT": "dogecoin",
             "ADA/USDT": "cardano",
             "FET/USDT": "fetch-ai",
+            "ETC/USDT": "ethereum-classic",
+            "AAVE/USDT": "aave",
             "BTC/USDT": "bitcoin",
             "PAXG/USDT": "pax-gold",
             "ETH/USDT": "ethereum",
@@ -1163,6 +1162,94 @@ class TradingEngine:
                 pnl = (current_price - self.fet_entry_price) / self.fet_entry_price * 100
                 bot_state["fet_pnl"] = round(pnl, 2)
             logger.debug(f"FET HOLD: {signal.reason}")
+    
+    def _init_etc_engine(self):
+        try:
+            from engine.etc_trend_engine import ETCTrendEngine
+            self.etc_trend_engine = ETCTrendEngine()
+            logger.info("ETC Trend Engine initialized (+221% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load ETC Trend Engine: {e}")
+            self.etc_trend_engine = None
+    
+    async def _etc_trend_cycle(self, add_activity, bot_state):
+        from engine.technical_analyzer import technical_analyzer
+        if not self.etc_trend_engine:
+            return
+        current_price = await self._get_current_price("ETC/USDT")
+        if not current_price:
+            return
+        technical = await technical_analyzer.analyze("ETC/USDT")
+        sma10 = technical.sma_10 if technical and hasattr(technical, 'sma_10') else current_price
+        sma20 = technical.sma_20 if technical and hasattr(technical, 'sma_20') else current_price
+        sma50 = technical.sma_50 if technical and hasattr(technical, 'sma_50') else current_price
+        rsi = technical.rsi if technical else 50
+        self.etc_trend_engine.update_position(self.etc_entry_price, self.etc_in_position)
+        signal = self.etc_trend_engine.get_signal(current_price, sma10, sma20, sma50, rsi, current_price*1.1, 0.0)
+        bot_state["etc_trend"] = signal.trend.value
+        bot_state["etc_action"] = signal.action.value
+        if signal.action.value == "BUY" and not self.etc_in_position:
+            add_activity("ETC_BUY_SIGNAL", f"{signal.reason}", traded=False)
+            if TRADING_ENABLED:
+                self.etc_entry_price = current_price
+                self.etc_in_position = True
+                bot_state["etc_in_position"] = True
+                bot_state["etc_entry_price"] = current_price
+        elif signal.action.value == "SELL" and self.etc_in_position:
+            pnl = (current_price - self.etc_entry_price) / self.etc_entry_price * 100
+            add_activity("ETC_SELL_SIGNAL", f"PnL: {pnl:+.1f}%", traded=False)
+            if TRADING_ENABLED:
+                self.etc_entry_price = 0.0
+                self.etc_in_position = False
+                bot_state["etc_in_position"] = False
+        else:
+            if self.etc_in_position and self.etc_entry_price > 0:
+                pnl = (current_price - self.etc_entry_price) / self.etc_entry_price * 100
+                bot_state["etc_pnl"] = round(pnl, 2)
+    
+    def _init_aave_engine(self):
+        try:
+            from engine.aave_trend_engine import AAVETrendEngine
+            self.aave_trend_engine = AAVETrendEngine()
+            logger.info("AAVE Trend Engine initialized (+787% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load AAVE Trend Engine: {e}")
+            self.aave_trend_engine = None
+    
+    async def _aave_trend_cycle(self, add_activity, bot_state):
+        from engine.technical_analyzer import technical_analyzer
+        if not self.aave_trend_engine:
+            return
+        current_price = await self._get_current_price("AAVE/USDT")
+        if not current_price:
+            return
+        technical = await technical_analyzer.analyze("AAVE/USDT")
+        sma10 = technical.sma_10 if technical and hasattr(technical, 'sma_10') else current_price
+        sma20 = technical.sma_20 if technical and hasattr(technical, 'sma_20') else current_price
+        sma50 = technical.sma_50 if technical and hasattr(technical, 'sma_50') else current_price
+        rsi = technical.rsi if technical else 50
+        self.aave_trend_engine.update_position(self.aave_entry_price, self.aave_in_position)
+        signal = self.aave_trend_engine.get_signal(current_price, sma10, sma20, sma50, rsi, current_price*1.1, 0.0)
+        bot_state["aave_trend"] = signal.trend.value
+        bot_state["aave_action"] = signal.action.value
+        if signal.action.value == "BUY" and not self.aave_in_position:
+            add_activity("AAVE_BUY_SIGNAL", f"{signal.reason}", traded=False)
+            if TRADING_ENABLED:
+                self.aave_entry_price = current_price
+                self.aave_in_position = True
+                bot_state["aave_in_position"] = True
+                bot_state["aave_entry_price"] = current_price
+        elif signal.action.value == "SELL" and self.aave_in_position:
+            pnl = (current_price - self.aave_entry_price) / self.aave_entry_price * 100
+            add_activity("AAVE_SELL_SIGNAL", f"PnL: {pnl:+.1f}%", traded=False)
+            if TRADING_ENABLED:
+                self.aave_entry_price = 0.0
+                self.aave_in_position = False
+                bot_state["aave_in_position"] = False
+        else:
+            if self.aave_in_position and self.aave_entry_price > 0:
+                pnl = (current_price - self.aave_entry_price) / self.aave_entry_price * 100
+                bot_state["aave_pnl"] = round(pnl, 2)
     
     def _init_btc_timing_engine(self):
         """Initialize BTC Market Timing Engine"""
