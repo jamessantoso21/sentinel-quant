@@ -57,6 +57,13 @@ bot_state = {
     "ada_in_position": False,
     "ada_entry_price": None,
     "ada_pnl": None,
+    
+    # BTC Market Timing Engine State (+7104% optimized)
+    "btc_phase": None,
+    "btc_action": None,
+    "btc_in_position": False,
+    "btc_entry_price": None,
+    "btc_pnl": None,
 }
 
 
@@ -120,6 +127,15 @@ async def get_bot_activity(current_user: CurrentUser, limit: int = 20):
             "in_position": bot_state.get("ada_in_position", False),
             "entry_price": bot_state.get("ada_entry_price"),
             "pnl_percent": bot_state.get("ada_pnl"),
+        },
+        
+        # BTC Market Timing Status
+        "btc": {
+            "phase": bot_state.get("btc_phase"),
+            "action": bot_state.get("btc_action"),
+            "in_position": bot_state.get("btc_in_position", False),
+            "entry_price": bot_state.get("btc_entry_price"),
+            "pnl_percent": bot_state.get("btc_pnl"),
         }
     }
 

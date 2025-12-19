@@ -14,37 +14,42 @@ from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Supported trading pairs - Only trend-following coins that beat B&H
+# Supported trading pairs
 TRADING_SYMBOLS = [
     "SOL/USDT",   # Solana - uses optimized Trend Following (+303% backtested)
     "MATIC/USDT", # Polygon - uses optimized Trend Following (+3084% backtested)
     "DOGE/USDT",  # Dogecoin - uses optimized Trend Following (+33723% backtested)
     "ADA/USDT",   # Cardano - uses optimized Trend Following (+1195% backtested)
-    # BTC removed: B&H (+1803%) beats all trend strategies (+61% to +157%)
+    "BTC/USDT",   # Bitcoin - uses Market Timing (+7104% backtested)
     # PAXG removed: Gold-backed token, not suitable for trend trading
 ]
 
-# Per-Asset Configuration - All use trend engines
+# Per-Asset Configuration
 ASSET_SETTINGS = {
     "SOL/USDT": {
-        "stop_loss": None,       # Trend engine handles exits
-        "take_profit": None,     # Trend engine handles exits
-        "use_trend_engine": True,  # Use optimized trend following (+303%)
+        "stop_loss": None,
+        "take_profit": None,
+        "use_trend_engine": True,  # Trend following (+303%)
     },
     "MATIC/USDT": {
-        "stop_loss": None,       # Trend engine handles exits
-        "take_profit": None,     # Trend engine handles exits
-        "use_trend_engine": True,  # Use optimized trend following (+3084%)
+        "stop_loss": None,
+        "take_profit": None,
+        "use_trend_engine": True,  # Trend following (+3084%)
     },
     "DOGE/USDT": {
-        "stop_loss": None,       # Trend engine handles exits
-        "take_profit": None,     # Trend engine handles exits
-        "use_trend_engine": True,  # Use optimized trend following (+33723%)
+        "stop_loss": None,
+        "take_profit": None,
+        "use_trend_engine": True,  # Trend following (+33723%)
     },
     "ADA/USDT": {
-        "stop_loss": None,       # Trend engine handles exits
-        "take_profit": None,     # Trend engine handles exits  
-        "use_trend_engine": True,  # Use optimized trend following (+1195%)
+        "stop_loss": None,
+        "take_profit": None,
+        "use_trend_engine": True,  # Trend following (+1195%)
+    },
+    "BTC/USDT": {
+        "stop_loss": None,
+        "take_profit": None,
+        "use_timing_engine": True,  # Market timing (+7104%)
     },
 }
 
@@ -102,6 +107,12 @@ class TradingEngine:
         self.ada_in_position = False
         self._init_ada_engine()
         
+        # BTC Market Timing Engine (+7104% backtested)
+        self.btc_timing_engine = None
+        self.btc_entry_price = 0.0
+        self.btc_in_position = False
+        self._init_btc_timing_engine()
+        
     async def start(self):
         """Start the trading loop"""
         if self.is_running:
@@ -152,7 +163,13 @@ class TradingEngine:
                 await self._ada_trend_cycle(add_activity, bot_state)
             return  # Trend coins use their own logic, skip consensus voting
         
-        # ========== BTC/PAXG: Use Consensus Voting ==========
+        # ========== BTC: Use Market Timing Engine ==========
+        if asset_settings.get("use_timing_engine"):
+            if self.current_symbol == "BTC/USDT":
+                await self._btc_timing_cycle(add_activity, bot_state)
+            return  # Bitcoin uses market timing, skip consensus
+        
+        # ========== Other: Use Consensus Voting ==========
         # 0. Check existing positions for TP/SL
         if self.current_symbol in self.positions:
             current_price = await self._get_current_price(self.current_symbol)
@@ -1056,6 +1073,75 @@ class TradingEngine:
                 pnl = (current_price - self.ada_entry_price) / self.ada_entry_price * 100
                 bot_state["ada_pnl"] = round(pnl, 2)
             logger.debug(f"ADA HOLD: {signal.reason}")
+    
+    def _init_btc_timing_engine(self):
+        """Initialize BTC Market Timing Engine"""
+        try:
+            from engine.btc_timing_engine import BTCMarketTimingEngine
+            self.btc_timing_engine = BTCMarketTimingEngine()
+            logger.info("BTC Market Timing Engine initialized (+7104% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load BTC Timing Engine: {e}")
+            self.btc_timing_engine = None
+    
+    async def _btc_timing_cycle(self, add_activity, bot_state):
+        """BTC trading using Market Timing strategy - hold but exit during crashes."""
+        from engine.technical_analyzer import technical_analyzer
+        
+        if not self.btc_timing_engine:
+            logger.warning("BTC Timing Engine not available, skipping")
+            return
+        
+        current_price = await self._get_current_price("BTC/USDT")
+        if not current_price:
+            add_activity("BTC_TIMING", "Could not get BTC price", traded=False)
+            return
+        
+        technical = await technical_analyzer.analyze("BTC/USDT")
+        rsi = technical.rsi if technical else 50
+        
+        self.btc_timing_engine.update_position(self.btc_entry_price, self.btc_in_position)
+        
+        signal = self.btc_timing_engine.get_signal(
+            current_price=current_price,
+            rsi=rsi
+        )
+        
+        bot_state["btc_phase"] = signal.phase.value
+        bot_state["btc_action"] = signal.action.value
+        
+        pnl = 0
+        if signal.action.value == "BUY" and not self.btc_in_position:
+            add_activity("BTC_BUY_SIGNAL", f"Phase: {signal.phase.value} | {signal.reason}", traded=False)
+            if TRADING_ENABLED:
+                self.btc_entry_price = current_price
+                self.btc_in_position = True
+                bot_state["btc_in_position"] = True
+                bot_state["btc_entry_price"] = current_price
+                await self._execute_trade("BUY", signal.confidence)
+                logger.info(f"BTC BUY executed at ${current_price:.2f}: {signal.reason}")
+            else:
+                add_activity("BTC_BUY_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        elif signal.action.value == "SELL" and self.btc_in_position:
+            pnl = (current_price - self.btc_entry_price) / self.btc_entry_price * 100
+            add_activity("BTC_SELL_SIGNAL", f"PnL: {pnl:+.1f}% | {signal.reason}", traded=False)
+            if TRADING_ENABLED:
+                self.btc_entry_price = 0.0
+                self.btc_in_position = False
+                bot_state["btc_in_position"] = False
+                bot_state["btc_entry_price"] = None
+                bot_state["btc_pnl"] = None
+                if "BTC/USDT" in self.positions:
+                    del self.positions["BTC/USDT"]
+                await self._execute_trade("SELL", signal.confidence)
+                logger.info(f"BTC SELL executed: {signal.reason} (PnL: {pnl:+.1f}%)")
+            else:
+                add_activity("BTC_SELL_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        else:
+            if self.btc_in_position and self.btc_entry_price > 0:
+                pnl = (current_price - self.btc_entry_price) / self.btc_entry_price * 100
+                bot_state["btc_pnl"] = round(pnl, 2)
+            logger.debug(f"BTC HOLD: {signal.reason}")
 
 
 # Global trading engine instance
