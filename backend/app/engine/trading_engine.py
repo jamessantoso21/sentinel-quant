@@ -18,11 +18,12 @@ logger = logging.getLogger(__name__)
 TRADING_SYMBOLS = [
     "SOL/USDT",   # Solana - Trend Following (+303%)
     "MATIC/USDT", # Polygon - Trend Following (+3084%)
-    "DOGE/USDT",  # Dogecoin - Trend Following (+33723%)
-    "ADA/USDT",   # Cardano - Trend Following (+1195%)
-    "FET/USDT",   # Fetch.AI - Trend Following (+368%)
-    "ETC/USDT",   # Ethereum Classic - Trend Following (+221%)
-    "AAVE/USDT",  # Aave - Trend Following (+787%)
+    "DOGE/USDT",  # Dogecoin - Trend Following (+25581%)
+    "ADA/USDT",   # Cardano - Trend Following (+956%)
+    "FET/USDT",   # Fetch.AI - Breakout (+1168%) - upgraded from Trend
+    "VET/USDT",   # VeChain - Breakout (+1237%) - NEW
+    "ETC/USDT",   # Ethereum Classic - Breakout (+542%)
+    "AAVE/USDT",  # Aave - Trend Following (+767%)
     "BTC/USDT",   # Bitcoin - Market Timing (+7104%)
 ]
 
@@ -32,8 +33,9 @@ ASSET_SETTINGS = {
     "MATIC/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
     "DOGE/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
     "ADA/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
-    "FET/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
-    "ETC/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
+    "FET/USDT": {"stop_loss": None, "take_profit": None, "use_breakout_engine": True},
+    "VET/USDT": {"stop_loss": None, "take_profit": None, "use_breakout_engine": True},
+    "ETC/USDT": {"stop_loss": None, "take_profit": None, "use_breakout_engine": True},
     "AAVE/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
     "BTC/USDT": {"stop_loss": None, "take_profit": None, "use_timing_engine": True},
 }
@@ -96,15 +98,21 @@ class TradingEngine:
         self.fet_trend_engine = None
         self.fet_entry_price = 0.0
         self.fet_in_position = False
-        self._init_fet_engine()
+        self._init_fet_breakout_engine()
         
-        # ETC Trend Engine (+221% backtested)
-        self.etc_trend_engine = None
+        # VET Breakout Engine (+1237% backtested) - NEW
+        self.vet_breakout_engine = None
+        self.vet_entry_price = 0.0
+        self.vet_in_position = False
+        self._init_vet_breakout_engine()
+        
+        # ETC Breakout Engine (+542% backtested) - upgraded
+        self.etc_breakout_engine = None
         self.etc_entry_price = 0.0
         self.etc_in_position = False
-        self._init_etc_engine()
+        self._init_etc_breakout_engine()
         
-        # AAVE Trend Engine (+787% backtested)
+        # AAVE Trend Engine (+767% backtested)
         self.aave_trend_engine = None
         self.aave_entry_price = 0.0
         self.aave_in_position = False
@@ -164,13 +172,19 @@ class TradingEngine:
                 await self._doge_trend_cycle(add_activity, bot_state)
             elif self.current_symbol == "ADA/USDT":
                 await self._ada_trend_cycle(add_activity, bot_state)
-            elif self.current_symbol == "FET/USDT":
-                await self._fet_trend_cycle(add_activity, bot_state)
-            elif self.current_symbol == "ETC/USDT":
-                await self._etc_trend_cycle(add_activity, bot_state)
             elif self.current_symbol == "AAVE/USDT":
                 await self._aave_trend_cycle(add_activity, bot_state)
-            return  # Trend coins use their own logic, skip consensus voting
+            return  # Trend coins use their own logic
+        
+        # ========== Breakout Strategy Coins ==========
+        if asset_settings.get("use_breakout_engine"):
+            if self.current_symbol == "FET/USDT":
+                await self._fet_breakout_cycle(add_activity, bot_state)
+            elif self.current_symbol == "VET/USDT":
+                await self._vet_breakout_cycle(add_activity, bot_state)
+            elif self.current_symbol == "ETC/USDT":
+                await self._etc_breakout_cycle(add_activity, bot_state)
+            return  # Breakout coins use their own logic
         
         # ========== BTC: Use Market Timing Engine ==========
         if asset_settings.get("use_timing_engine"):
@@ -661,6 +675,7 @@ class TradingEngine:
             "DOGE/USDT": "DOGE",
             "ADA/USDT": "ADA",
             "FET/USDT": "FET",
+            "VET/USDT": "VET",
             "ETC/USDT": "ETC",
             "AAVE/USDT": "AAVE",
             "BTC/USDT": "BTC",
@@ -673,6 +688,7 @@ class TradingEngine:
             "DOGE/USDT": "dogecoin",
             "ADA/USDT": "cardano",
             "FET/USDT": "fetch-ai",
+            "VET/USDT": "vechain",
             "ETC/USDT": "ethereum-classic",
             "AAVE/USDT": "aave",
             "BTC/USDT": "bitcoin",
@@ -1089,15 +1105,138 @@ class TradingEngine:
                 bot_state["ada_pnl"] = round(pnl, 2)
             logger.debug(f"ADA HOLD: {signal.reason}")
     
-    def _init_fet_engine(self):
-        """Initialize FET Trend Engine"""
+    def _init_fet_breakout_engine(self):
+        """Initialize FET Breakout Engine (+1168%)"""
         try:
-            from engine.fet_trend_engine import FETTrendEngine
-            self.fet_trend_engine = FETTrendEngine()
-            logger.info("FET Trend Engine initialized (+368% backtested)")
+            from engine.fet_breakout_engine import FETBreakoutEngine
+            self.fet_breakout_engine = FETBreakoutEngine()
+            logger.info("FET Breakout Engine initialized (+1168% backtested)")
         except ImportError as e:
-            logger.warning(f"Could not load FET Trend Engine: {e}")
-            self.fet_trend_engine = None
+            logger.warning(f"Could not load FET Breakout Engine: {e}")
+            self.fet_breakout_engine = None
+    
+    async def _fet_breakout_cycle(self, add_activity, bot_state):
+        """FET trading using Breakout strategy."""
+        from engine.technical_analyzer import technical_analyzer
+        if not self.fet_breakout_engine:
+            return
+        current_price = await self._get_current_price("FET/USDT")
+        if not current_price:
+            return
+        technical = await technical_analyzer.analyze("FET/USDT")
+        high_20d = technical.high_20d if technical and hasattr(technical, 'high_20d') else current_price * 1.1
+        low_20d = technical.low_20d if technical and hasattr(technical, 'low_20d') else current_price * 0.9
+        self.fet_breakout_engine.update_position(self.fet_entry_price, self.fet_in_position)
+        signal = self.fet_breakout_engine.get_signal(current_price, high_20d, low_20d)
+        bot_state["fet_action"] = signal.action.value
+        if signal.action.value == "BUY" and not self.fet_in_position:
+            add_activity("FET_BREAKOUT_BUY", signal.reason, traded=False)
+            if TRADING_ENABLED:
+                self.fet_entry_price = current_price
+                self.fet_in_position = True
+                bot_state["fet_in_position"] = True
+                bot_state["fet_entry_price"] = current_price
+        elif signal.action.value == "SELL" and self.fet_in_position:
+            pnl = (current_price - self.fet_entry_price) / self.fet_entry_price * 100
+            add_activity("FET_BREAKOUT_SELL", f"PnL: {pnl:+.1f}%", traded=False)
+            if TRADING_ENABLED:
+                self.fet_entry_price = 0.0
+                self.fet_in_position = False
+                bot_state["fet_in_position"] = False
+        else:
+            if self.fet_in_position and self.fet_entry_price > 0:
+                pnl = (current_price - self.fet_entry_price) / self.fet_entry_price * 100
+                bot_state["fet_pnl"] = round(pnl, 2)
+    
+    def _init_vet_breakout_engine(self):
+        """Initialize VET Breakout Engine (+1237%)"""
+        try:
+            from engine.vet_breakout_engine import VETBreakoutEngine
+            self.vet_breakout_engine = VETBreakoutEngine()
+            logger.info("VET Breakout Engine initialized (+1237% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load VET Breakout Engine: {e}")
+            self.vet_breakout_engine = None
+    
+    async def _vet_breakout_cycle(self, add_activity, bot_state):
+        """VET trading using Breakout strategy."""
+        from engine.technical_analyzer import technical_analyzer
+        if not self.vet_breakout_engine:
+            return
+        current_price = await self._get_current_price("VET/USDT")
+        if not current_price:
+            return
+        technical = await technical_analyzer.analyze("VET/USDT")
+        high_20d = technical.high_20d if technical and hasattr(technical, 'high_20d') else current_price * 1.1
+        low_20d = technical.low_20d if technical and hasattr(technical, 'low_20d') else current_price * 0.9
+        self.vet_breakout_engine.update_position(self.vet_entry_price, self.vet_in_position)
+        signal = self.vet_breakout_engine.get_signal(current_price, high_20d, low_20d)
+        bot_state["vet_action"] = signal.action.value
+        if signal.action.value == "BUY" and not self.vet_in_position:
+            add_activity("VET_BREAKOUT_BUY", signal.reason, traded=False)
+            if TRADING_ENABLED:
+                self.vet_entry_price = current_price
+                self.vet_in_position = True
+                bot_state["vet_in_position"] = True
+                bot_state["vet_entry_price"] = current_price
+        elif signal.action.value == "SELL" and self.vet_in_position:
+            pnl = (current_price - self.vet_entry_price) / self.vet_entry_price * 100
+            add_activity("VET_BREAKOUT_SELL", f"PnL: {pnl:+.1f}%", traded=False)
+            if TRADING_ENABLED:
+                self.vet_entry_price = 0.0
+                self.vet_in_position = False
+                bot_state["vet_in_position"] = False
+        else:
+            if self.vet_in_position and self.vet_entry_price > 0:
+                pnl = (current_price - self.vet_entry_price) / self.vet_entry_price * 100
+                bot_state["vet_pnl"] = round(pnl, 2)
+    
+    def _init_etc_breakout_engine(self):
+        """Initialize ETC Breakout Engine (+542%)"""
+        try:
+            from engine.etc_breakout_engine import ETCBreakoutEngine
+            self.etc_breakout_engine = ETCBreakoutEngine()
+            logger.info("ETC Breakout Engine initialized (+542% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load ETC Breakout Engine: {e}")
+            self.etc_breakout_engine = None
+    
+    async def _etc_breakout_cycle(self, add_activity, bot_state):
+        """ETC trading using Breakout strategy."""
+        from engine.technical_analyzer import technical_analyzer
+        if not self.etc_breakout_engine:
+            return
+        current_price = await self._get_current_price("ETC/USDT")
+        if not current_price:
+            return
+        technical = await technical_analyzer.analyze("ETC/USDT")
+        high_20d = technical.high_20d if technical and hasattr(technical, 'high_20d') else current_price * 1.1
+        low_20d = technical.low_20d if technical and hasattr(technical, 'low_20d') else current_price * 0.9
+        self.etc_breakout_engine.update_position(self.etc_entry_price, self.etc_in_position)
+        signal = self.etc_breakout_engine.get_signal(current_price, high_20d, low_20d)
+        bot_state["etc_action"] = signal.action.value
+        if signal.action.value == "BUY" and not self.etc_in_position:
+            add_activity("ETC_BREAKOUT_BUY", signal.reason, traded=False)
+            if TRADING_ENABLED:
+                self.etc_entry_price = current_price
+                self.etc_in_position = True
+                bot_state["etc_in_position"] = True
+                bot_state["etc_entry_price"] = current_price
+        elif signal.action.value == "SELL" and self.etc_in_position:
+            pnl = (current_price - self.etc_entry_price) / self.etc_entry_price * 100
+            add_activity("ETC_BREAKOUT_SELL", f"PnL: {pnl:+.1f}%", traded=False)
+            if TRADING_ENABLED:
+                self.etc_entry_price = 0.0
+                self.etc_in_position = False
+                bot_state["etc_in_position"] = False
+        else:
+            if self.etc_in_position and self.etc_entry_price > 0:
+                pnl = (current_price - self.etc_entry_price) / self.etc_entry_price * 100
+                bot_state["etc_pnl"] = round(pnl, 2)
+    
+    # Legacy FET trend engine (deprecated - now using breakout)
+    def _init_fet_engine(self):
+        pass  # Deprecated - using _init_fet_breakout_engine instead
     
     async def _fet_trend_cycle(self, add_activity, bot_state):
         """FET trading using optimized Trend Following strategy."""
