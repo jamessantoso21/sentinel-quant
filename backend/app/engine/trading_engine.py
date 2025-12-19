@@ -20,9 +20,10 @@ TRADING_SYMBOLS = [
     "MATIC/USDT", # Polygon - Trend Following (+3084%)
     "DOGE/USDT",  # Dogecoin - Trend Following (+25581%)
     "ADA/USDT",   # Cardano - Trend Following (+956%)
-    "FET/USDT",   # Fetch.AI - Breakout (+1168%) - upgraded from Trend
-    "VET/USDT",   # VeChain - Breakout (+1237%) - NEW
+    "FET/USDT",   # Fetch.AI - Breakout (+1168%)
+    "VET/USDT",   # VeChain - Breakout (+1237%)
     "ETC/USDT",   # Ethereum Classic - Breakout (+542%)
+    "HBAR/USDT",  # Hedera - Breakout (+1562%) - BEST 10th coin
     "AAVE/USDT",  # Aave - Trend Following (+767%)
     "BTC/USDT",   # Bitcoin - Market Timing (+7104%)
 ]
@@ -36,6 +37,7 @@ ASSET_SETTINGS = {
     "FET/USDT": {"stop_loss": None, "take_profit": None, "use_breakout_engine": True},
     "VET/USDT": {"stop_loss": None, "take_profit": None, "use_breakout_engine": True},
     "ETC/USDT": {"stop_loss": None, "take_profit": None, "use_breakout_engine": True},
+    "HBAR/USDT": {"stop_loss": None, "take_profit": None, "use_breakout_engine": True},
     "AAVE/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
     "BTC/USDT": {"stop_loss": None, "take_profit": None, "use_timing_engine": True},
 }
@@ -112,6 +114,12 @@ class TradingEngine:
         self.etc_in_position = False
         self._init_etc_breakout_engine()
         
+        # HBAR Breakout Engine (+1562% backtested) - BEST 10th coin
+        self.hbar_breakout_engine = None
+        self.hbar_entry_price = 0.0
+        self.hbar_in_position = False
+        self._init_hbar_breakout_engine()
+        
         # AAVE Trend Engine (+767% backtested)
         self.aave_trend_engine = None
         self.aave_entry_price = 0.0
@@ -184,6 +192,8 @@ class TradingEngine:
                 await self._vet_breakout_cycle(add_activity, bot_state)
             elif self.current_symbol == "ETC/USDT":
                 await self._etc_breakout_cycle(add_activity, bot_state)
+            elif self.current_symbol == "HBAR/USDT":
+                await self._hbar_breakout_cycle(add_activity, bot_state)
             return  # Breakout coins use their own logic
         
         # ========== BTC: Use Market Timing Engine ==========
@@ -677,6 +687,7 @@ class TradingEngine:
             "FET/USDT": "FET",
             "VET/USDT": "VET",
             "ETC/USDT": "ETC",
+            "HBAR/USDT": "HBAR",
             "AAVE/USDT": "AAVE",
             "BTC/USDT": "BTC",
             "PAXG/USDT": "PAXG",
@@ -690,6 +701,7 @@ class TradingEngine:
             "FET/USDT": "fetch-ai",
             "VET/USDT": "vechain",
             "ETC/USDT": "ethereum-classic",
+            "HBAR/USDT": "hedera-hashgraph",
             "AAVE/USDT": "aave",
             "BTC/USDT": "bitcoin",
             "PAXG/USDT": "pax-gold",
@@ -1233,6 +1245,49 @@ class TradingEngine:
             if self.etc_in_position and self.etc_entry_price > 0:
                 pnl = (current_price - self.etc_entry_price) / self.etc_entry_price * 100
                 bot_state["etc_pnl"] = round(pnl, 2)
+    
+    def _init_hbar_breakout_engine(self):
+        """Initialize HBAR Breakout Engine (+1562%)"""
+        try:
+            from engine.hbar_breakout_engine import HBARBreakoutEngine
+            self.hbar_breakout_engine = HBARBreakoutEngine()
+            logger.info("HBAR Breakout Engine initialized (+1562% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load HBAR Breakout Engine: {e}")
+            self.hbar_breakout_engine = None
+    
+    async def _hbar_breakout_cycle(self, add_activity, bot_state):
+        """HBAR trading using Breakout strategy."""
+        from engine.technical_analyzer import technical_analyzer
+        if not self.hbar_breakout_engine:
+            return
+        current_price = await self._get_current_price("HBAR/USDT")
+        if not current_price:
+            return
+        technical = await technical_analyzer.analyze("HBAR/USDT")
+        high_20d = technical.high_20d if technical and hasattr(technical, 'high_20d') else current_price * 1.1
+        low_20d = technical.low_20d if technical and hasattr(technical, 'low_20d') else current_price * 0.9
+        self.hbar_breakout_engine.update_position(self.hbar_entry_price, self.hbar_in_position)
+        signal = self.hbar_breakout_engine.get_signal(current_price, high_20d, low_20d)
+        bot_state["hbar_action"] = signal.action.value
+        if signal.action.value == "BUY" and not self.hbar_in_position:
+            add_activity("HBAR_BREAKOUT_BUY", signal.reason, traded=False)
+            if TRADING_ENABLED:
+                self.hbar_entry_price = current_price
+                self.hbar_in_position = True
+                bot_state["hbar_in_position"] = True
+                bot_state["hbar_entry_price"] = current_price
+        elif signal.action.value == "SELL" and self.hbar_in_position:
+            pnl = (current_price - self.hbar_entry_price) / self.hbar_entry_price * 100
+            add_activity("HBAR_BREAKOUT_SELL", f"PnL: {pnl:+.1f}%", traded=False)
+            if TRADING_ENABLED:
+                self.hbar_entry_price = 0.0
+                self.hbar_in_position = False
+                bot_state["hbar_in_position"] = False
+        else:
+            if self.hbar_in_position and self.hbar_entry_price > 0:
+                pnl = (current_price - self.hbar_entry_price) / self.hbar_entry_price * 100
+                bot_state["hbar_pnl"] = round(pnl, 2)
     
     # Legacy FET trend engine (deprecated - now using breakout)
     def _init_fet_engine(self):
