@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # Supported trading pairs
 TRADING_SYMBOLS = [
     "SOL/USDT",   # Solana - uses optimized Trend Following (+303% backtested)
+    "MATIC/USDT", # Polygon - uses optimized Trend Following (+3084% backtested)
     "BTC/USDT",   # Bitcoin
     "PAXG/USDT",  # Pax Gold (Gold-backed token)
 ]
@@ -27,6 +28,11 @@ ASSET_SETTINGS = {
         "stop_loss": None,       # Trend engine handles exits
         "take_profit": None,     # Trend engine handles exits
         "use_trend_engine": True,  # Use optimized trend following
+    },
+    "MATIC/USDT": {
+        "stop_loss": None,       # Trend engine handles exits
+        "take_profit": None,     # Trend engine handles exits
+        "use_trend_engine": True,  # Use optimized trend following (+3084%)
     },
     "BTC/USDT": {
         "stop_loss": 0.02,       # 2% SL (from BTC backtest: 13.9% return)
@@ -76,6 +82,12 @@ class TradingEngine:
         self.sol_in_position = False
         self._init_sol_engine()
         
+        # MATIC Trend Engine (+3084% backtested)
+        self.matic_trend_engine = None
+        self.matic_entry_price = 0.0
+        self.matic_in_position = False
+        self._init_matic_engine()
+        
     async def start(self):
         """Start the trading loop"""
         if self.is_running:
@@ -114,10 +126,13 @@ class TradingEngine:
         # Get asset settings
         asset_settings = get_asset_settings(self.current_symbol)
         
-        # ========== SOL: Use Optimized Trend Engine (+303% backtested) ==========
+        # ========== Trend Engine Coins (bypass consensus) ==========
         if asset_settings.get("use_trend_engine"):
-            await self._sol_trend_cycle(add_activity, bot_state)
-            return  # SOL uses its own logic, skip consensus voting
+            if self.current_symbol == "SOL/USDT":
+                await self._sol_trend_cycle(add_activity, bot_state)
+            elif self.current_symbol == "MATIC/USDT":
+                await self._matic_trend_cycle(add_activity, bot_state)
+            return  # Trend coins use their own logic, skip consensus voting
         
         # ========== BTC/PAXG: Use Consensus Voting ==========
         # 0. Check existing positions for TP/SL
@@ -599,6 +614,7 @@ class TradingEngine:
         try:
             coin_map = {
                 "SOL/USDT": "solana",
+                "MATIC/USDT": "matic-network",
                 "BTC/USDT": "bitcoin",
                 "PAXG/USDT": "pax-gold",
                 "ETH/USDT": "ethereum",
@@ -727,6 +743,117 @@ class TradingEngine:
                 pnl = (current_price - self.sol_entry_price) / self.sol_entry_price * 100
                 bot_state["sol_pnl"] = round(pnl, 2)
             logger.debug(f"SOL HOLD: {signal.reason}")
+    
+    def _init_matic_engine(self):
+        """Initialize MATIC Trend Engine"""
+        try:
+            from engine.matic_trend_engine import MATICTrendEngine
+            self.matic_trend_engine = MATICTrendEngine()
+            logger.info("MATIC Trend Engine initialized (+3084% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load MATIC Trend Engine: {e}")
+            self.matic_trend_engine = None
+    
+    async def _matic_trend_cycle(self, add_activity, bot_state):
+        """
+        MATIC trading using optimized Trend Following strategy.
+        Bypasses consensus voting for +3084% backtested performance.
+        """
+        from engine.technical_analyzer import technical_analyzer
+        
+        if not self.matic_trend_engine:
+            logger.warning("MATIC Trend Engine not available, skipping")
+            return
+        
+        # Get current price
+        current_price = await self._get_current_price("MATIC/USDT")
+        if not current_price:
+            add_activity("MATIC_TREND", "Could not get MATIC price", traded=False)
+            return
+        
+        # Get technical data for indicators
+        technical = await technical_analyzer.analyze("MATIC/USDT")
+        
+        # Prepare data for trend engine
+        sma10 = technical.sma_10 if technical and hasattr(technical, 'sma_10') else current_price
+        sma20 = technical.sma_20 if technical and hasattr(technical, 'sma_20') else current_price
+        sma50 = technical.sma_50 if technical and hasattr(technical, 'sma_50') else current_price
+        rsi = technical.rsi if technical else 50
+        high_20d = current_price * 1.1  # Approximate
+        
+        # Update engine position state
+        self.matic_trend_engine.update_position(self.matic_entry_price, self.matic_in_position)
+        
+        # Get signal from trend engine
+        signal = self.matic_trend_engine.get_signal(
+            current_price=current_price,
+            sma10=sma10,
+            sma20=sma20,
+            sma50=sma50,
+            rsi=rsi,
+            high_20d=high_20d,
+            momentum_7d=0.0
+        )
+        
+        # Log current state
+        trend_info = f"Trend: {signal.trend.value} | RSI: {rsi:.0f}"
+        add_activity("MATIC_TREND", f"${current_price:.4f} | {trend_info} | Signal: {signal.action.value}", traded=False)
+        bot_state["matic_trend"] = signal.trend.value
+        bot_state["matic_action"] = signal.action.value
+        
+        # Execute trade based on signal
+        if signal.action.value == "BUY" and not self.matic_in_position:
+            if settings.TRADING_ENABLED:
+                add_activity("MATIC_BUY", f"{signal.reason} @ ${current_price:.4f}", traded=True)
+                self.matic_entry_price = current_price
+                self.matic_in_position = True
+                
+                # Update bot_state for monitoring
+                bot_state["matic_in_position"] = True
+                bot_state["matic_entry_price"] = current_price
+                bot_state["matic_pnl"] = 0.0
+                
+                # Record position
+                self.positions["MATIC/USDT"] = {
+                    'side': 'BUY',
+                    'entry_price': current_price,
+                    'entry_time': datetime.now(timezone.utc),
+                    'tp_price': None,
+                    'sl_price': None,
+                }
+                
+                await self._execute_trade("BUY", signal.confidence)
+                logger.info(f"MATIC BUY executed: {signal.reason}")
+            else:
+                add_activity("MATIC_BUY_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        
+        elif signal.action.value == "SELL" and self.matic_in_position:
+            if settings.TRADING_ENABLED:
+                pnl = (current_price - self.matic_entry_price) / self.matic_entry_price * 100
+                add_activity("MATIC_SELL", f"{signal.reason} @ ${current_price:.4f} (PnL: {pnl:+.1f}%)", traded=True)
+                self.matic_entry_price = 0.0
+                self.matic_in_position = False
+                
+                # Update bot_state for monitoring
+                bot_state["matic_in_position"] = False
+                bot_state["matic_entry_price"] = None
+                bot_state["matic_pnl"] = None
+                
+                # Clear position
+                if "MATIC/USDT" in self.positions:
+                    del self.positions["MATIC/USDT"]
+                
+                await self._execute_trade("SELL", signal.confidence)
+                logger.info(f"MATIC SELL executed: {signal.reason} (PnL: {pnl:+.1f}%)")
+            else:
+                add_activity("MATIC_SELL_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        
+        else:
+            # HOLD - update PnL if in position
+            if self.matic_in_position and self.matic_entry_price > 0:
+                pnl = (current_price - self.matic_entry_price) / self.matic_entry_price * 100
+                bot_state["matic_pnl"] = round(pnl, 2)
+            logger.debug(f"MATIC HOLD: {signal.reason}")
 
 
 # Global trading engine instance

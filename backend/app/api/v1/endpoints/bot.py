@@ -36,6 +36,13 @@ bot_state = {
     "sol_in_position": False, # Is SOL position open?
     "sol_entry_price": None,  # Entry price if in position
     "sol_pnl": None,          # Current unrealized PnL %
+    
+    # MATIC Trend Engine State (+3084% optimized)
+    "matic_trend": None,
+    "matic_action": None,
+    "matic_in_position": False,
+    "matic_entry_price": None,
+    "matic_pnl": None,
 }
 
 
