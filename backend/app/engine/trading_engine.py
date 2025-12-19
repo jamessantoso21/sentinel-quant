@@ -16,22 +16,22 @@ logger = logging.getLogger(__name__)
 
 # Supported trading pairs
 TRADING_SYMBOLS = [
-    "SOL/USDT",   # Solana - Trend Following (+303%)
-    "MATIC/USDT", # Polygon - Trend Following (+3084%)
+    "SOL/USDT",   # Solana - Breakout (+1152%) - upgraded from Trend
+    "MATIC/USDT", # Polygon - Market Timing (+3810%) - upgraded from Trend
     "DOGE/USDT",  # Dogecoin - Trend Following (+25581%)
     "ADA/USDT",   # Cardano - Trend Following (+956%)
     "FET/USDT",   # Fetch.AI - Breakout (+1168%)
     "VET/USDT",   # VeChain - Breakout (+1237%)
     "ETC/USDT",   # Ethereum Classic - Breakout (+542%)
-    "HBAR/USDT",  # Hedera - Breakout (+1562%) - BEST 10th coin
+    "HBAR/USDT",  # Hedera - Breakout (+1562%)
     "AAVE/USDT",  # Aave - Trend Following (+767%)
     "BTC/USDT",   # Bitcoin - Market Timing (+7104%)
 ]
 
 # Per-Asset Configuration
 ASSET_SETTINGS = {
-    "SOL/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
-    "MATIC/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
+    "SOL/USDT": {"stop_loss": None, "take_profit": None, "use_breakout_engine": True},
+    "MATIC/USDT": {"stop_loss": None, "take_profit": None, "use_timing_engine": True},
     "DOGE/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
     "ADA/USDT": {"stop_loss": None, "take_profit": None, "use_trend_engine": True},
     "FET/USDT": {"stop_loss": None, "take_profit": None, "use_breakout_engine": True},
@@ -72,17 +72,18 @@ class TradingEngine:
         # Position tracking for TP/SL
         self.positions: Dict[str, Dict] = {}  # {symbol: {side, entry_price, entry_time}}
         
-        # SOL Trend Engine (+303% backtested)
-        self.sol_trend_engine = None
+        # SOL Breakout Engine (+1152% backtested) - upgraded from Trend
+        self.sol_breakout_engine = None
         self.sol_entry_price = 0.0
         self.sol_in_position = False
-        self._init_sol_engine()
+        self._init_sol_breakout_engine()
         
-        # MATIC Trend Engine (+3084% backtested)
-        self.matic_trend_engine = None
+        # MATIC Market Timing Engine (+3810% backtested) - upgraded from Trend
+        self.matic_timing_engine = None
         self.matic_entry_price = 0.0
         self.matic_in_position = False
-        self._init_matic_engine()
+        self.matic_ath = 0.0  # Track ATH for timing
+        self._init_matic_timing_engine()
         
         # DOGE Trend Engine (+33723% backtested)
         self.doge_trend_engine = None
@@ -172,11 +173,7 @@ class TradingEngine:
         
         # ========== Trend Engine Coins (bypass consensus) ==========
         if asset_settings.get("use_trend_engine"):
-            if self.current_symbol == "SOL/USDT":
-                await self._sol_trend_cycle(add_activity, bot_state)
-            elif self.current_symbol == "MATIC/USDT":
-                await self._matic_trend_cycle(add_activity, bot_state)
-            elif self.current_symbol == "DOGE/USDT":
+            if self.current_symbol == "DOGE/USDT":
                 await self._doge_trend_cycle(add_activity, bot_state)
             elif self.current_symbol == "ADA/USDT":
                 await self._ada_trend_cycle(add_activity, bot_state)
@@ -186,7 +183,9 @@ class TradingEngine:
         
         # ========== Breakout Strategy Coins ==========
         if asset_settings.get("use_breakout_engine"):
-            if self.current_symbol == "FET/USDT":
+            if self.current_symbol == "SOL/USDT":
+                await self._sol_breakout_cycle(add_activity, bot_state)
+            elif self.current_symbol == "FET/USDT":
                 await self._fet_breakout_cycle(add_activity, bot_state)
             elif self.current_symbol == "VET/USDT":
                 await self._vet_breakout_cycle(add_activity, bot_state)
@@ -196,11 +195,13 @@ class TradingEngine:
                 await self._hbar_breakout_cycle(add_activity, bot_state)
             return  # Breakout coins use their own logic
         
-        # ========== BTC: Use Market Timing Engine ==========
+        # ========== Market Timing Coins ==========
         if asset_settings.get("use_timing_engine"):
-            if self.current_symbol == "BTC/USDT":
+            if self.current_symbol == "MATIC/USDT":
+                await self._matic_timing_cycle(add_activity, bot_state)
+            elif self.current_symbol == "BTC/USDT":
                 await self._btc_timing_cycle(add_activity, bot_state)
-            return  # Bitcoin uses market timing, skip consensus
+            return  # Market timing coins use their own logic
         
         # ========== Other: Use Consensus Voting ==========
         # 0. Check existing positions for TP/SL
@@ -850,6 +851,99 @@ class TradingEngine:
                 pnl = (current_price - self.sol_entry_price) / self.sol_entry_price * 100
                 bot_state["sol_pnl"] = round(pnl, 2)
             logger.debug(f"SOL HOLD: {signal.reason}")
+    
+    def _init_sol_breakout_engine(self):
+        """Initialize SOL Breakout Engine (+1152%)"""
+        try:
+            from engine.sol_breakout_engine import SOLBreakoutEngine
+            self.sol_breakout_engine = SOLBreakoutEngine()
+            logger.info("SOL Breakout Engine initialized (+1152% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load SOL Breakout Engine: {e}")
+            self.sol_breakout_engine = None
+    
+    async def _sol_breakout_cycle(self, add_activity, bot_state):
+        """SOL trading using Breakout strategy."""
+        from engine.technical_analyzer import technical_analyzer
+        if not self.sol_breakout_engine:
+            return
+        current_price = await self._get_current_price("SOL/USDT")
+        if not current_price:
+            return
+        technical = await technical_analyzer.analyze("SOL/USDT")
+        high_20d = technical.high_20d if technical and hasattr(technical, 'high_20d') else current_price * 1.1
+        low_20d = technical.low_20d if technical and hasattr(technical, 'low_20d') else current_price * 0.9
+        self.sol_breakout_engine.update_position(self.sol_entry_price, self.sol_in_position)
+        signal = self.sol_breakout_engine.get_signal(current_price, high_20d, low_20d)
+        bot_state["sol_action"] = signal.action.value
+        if signal.action.value == "BUY" and not self.sol_in_position:
+            add_activity("SOL_BREAKOUT_BUY", signal.reason, traded=False)
+            if TRADING_ENABLED:
+                self.sol_entry_price = current_price
+                self.sol_in_position = True
+                bot_state["sol_in_position"] = True
+                bot_state["sol_entry_price"] = current_price
+        elif signal.action.value == "SELL" and self.sol_in_position:
+            pnl = (current_price - self.sol_entry_price) / self.sol_entry_price * 100
+            add_activity("SOL_BREAKOUT_SELL", f"PnL: {pnl:+.1f}%", traded=False)
+            if TRADING_ENABLED:
+                self.sol_entry_price = 0.0
+                self.sol_in_position = False
+                bot_state["sol_in_position"] = False
+        else:
+            if self.sol_in_position and self.sol_entry_price > 0:
+                pnl = (current_price - self.sol_entry_price) / self.sol_entry_price * 100
+                bot_state["sol_pnl"] = round(pnl, 2)
+    
+    def _init_matic_timing_engine(self):
+        """Initialize MATIC Market Timing Engine (+3810%)"""
+        try:
+            from engine.matic_timing_engine import MATICMarketTimingEngine
+            self.matic_timing_engine = MATICMarketTimingEngine()
+            logger.info("MATIC Market Timing Engine initialized (+3810% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load MATIC Timing Engine: {e}")
+            self.matic_timing_engine = None
+    
+    async def _matic_timing_cycle(self, add_activity, bot_state):
+        """MATIC trading using Market Timing strategy."""
+        from engine.technical_analyzer import technical_analyzer
+        if not self.matic_timing_engine:
+            return
+        current_price = await self._get_current_price("MATIC/USDT")
+        if not current_price:
+            return
+        if current_price > self.matic_ath:
+            self.matic_ath = current_price
+        technical = await technical_analyzer.analyze("MATIC/USDT")
+        sma50 = technical.sma_50 if technical and hasattr(technical, 'sma_50') else current_price
+        momentum_30d = technical.momentum_30d if technical and hasattr(technical, 'momentum_30d') else 0.0
+        self.matic_timing_engine.update_position(self.matic_entry_price, self.matic_in_position)
+        signal = self.matic_timing_engine.get_signal(current_price, sma50, momentum_30d, self.matic_ath)
+        bot_state["matic_action"] = signal.action.value
+        bot_state["matic_phase"] = signal.phase.value
+        if signal.action.value == "BUY" and not self.matic_in_position:
+            add_activity("MATIC_TIMING_BUY", signal.reason, traded=False)
+            if TRADING_ENABLED:
+                self.matic_entry_price = current_price
+                self.matic_in_position = True
+                bot_state["matic_in_position"] = True
+                bot_state["matic_entry_price"] = current_price
+        elif signal.action.value == "SELL" and self.matic_in_position:
+            pnl = (current_price - self.matic_entry_price) / self.matic_entry_price * 100
+            add_activity("MATIC_TIMING_SELL", f"PnL: {pnl:+.1f}%", traded=False)
+            if TRADING_ENABLED:
+                self.matic_entry_price = 0.0
+                self.matic_in_position = False
+                bot_state["matic_in_position"] = False
+        else:
+            if self.matic_in_position and self.matic_entry_price > 0:
+                pnl = (current_price - self.matic_entry_price) / self.matic_entry_price * 100
+                bot_state["matic_pnl"] = round(pnl, 2)
+    
+    # Legacy SOL/MATIC trend engines (deprecated)
+    def _init_sol_engine(self):
+        pass
     
     def _init_matic_engine(self):
         """Initialize MATIC Trend Engine"""
