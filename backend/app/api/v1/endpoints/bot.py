@@ -43,6 +43,13 @@ bot_state = {
     "matic_in_position": False,
     "matic_entry_price": None,
     "matic_pnl": None,
+    
+    # DOGE Trend Engine State (+33723% optimized)
+    "doge_trend": None,
+    "doge_action": None,
+    "doge_in_position": False,
+    "doge_entry_price": None,
+    "doge_pnl": None,
 }
 
 
@@ -88,6 +95,15 @@ async def get_bot_activity(current_user: CurrentUser, limit: int = 20):
             "in_position": bot_state.get("matic_in_position", False),
             "entry_price": bot_state.get("matic_entry_price"),
             "pnl_percent": bot_state.get("matic_pnl"),
+        },
+        
+        # DOGE Trend Engine Status
+        "doge": {
+            "trend": bot_state.get("doge_trend"),
+            "action": bot_state.get("doge_action"),
+            "in_position": bot_state.get("doge_in_position", False),
+            "entry_price": bot_state.get("doge_entry_price"),
+            "pnl_percent": bot_state.get("doge_pnl"),
         }
     }
 
