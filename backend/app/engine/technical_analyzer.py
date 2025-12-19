@@ -163,7 +163,7 @@ class TechnicalAnalyzer:
             return None
     
     async def _fetch_price_data(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
-        """Fetch OHLCV data - try CoinGecko first (no geo-block), fallback to Binance"""
+        """Fetch OHLCV data - try CryptoCompare first, then CoinGecko, fallback to Binance"""
         import time
         
         # Check cache first
@@ -174,24 +174,76 @@ class TechnicalAnalyzer:
                 logger.info(f"Using cached price data for {symbol} (age: {cache_age:.0f}s)")
                 return self._price_cache[cache_key].copy()
         
-        # Try CoinGecko first (no geo-restrictions)
-        df = await self._fetch_from_coingecko(symbol, limit)
-        if df is not None and len(df) >= 40:  # CoinGecko provides ~42 candles
-            # Cache the result
+        # Try CryptoCompare first (most generous rate limits, no geo-block)
+        df = await self._fetch_from_cryptocompare(symbol, limit)
+        if df is not None and len(df) >= 40:
             self._price_cache[cache_key] = df.copy()
             self._cache_times[cache_key] = time.time()
-            logger.info(f"Cached price data for {symbol}")
+            logger.info(f"Cached price data for {symbol} from CryptoCompare")
             return df
         
-        # Fallback to Binance
+        # Try CoinGecko (may be rate limited)
+        df = await self._fetch_from_coingecko(symbol, limit)
+        if df is not None and len(df) >= 40:
+            self._price_cache[cache_key] = df.copy()
+            self._cache_times[cache_key] = time.time()
+            logger.info(f"Cached price data for {symbol} from CoinGecko")
+            return df
+        
+        # Fallback to Binance (may be geo-blocked)
         df = await self._fetch_from_binance(symbol, limit)
         if df is not None and len(df) >= 40:
             self._price_cache[cache_key] = df.copy()
             self._cache_times[cache_key] = time.time()
         return df
     
+    async def _fetch_from_cryptocompare(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
+        """Fetch from CryptoCompare API (generous rate limits, no geo-block)"""
+        try:
+            # Map symbol to CryptoCompare format
+            symbol_map = {
+                "BTC/USDT": "BTC",
+                "ETH/USDT": "ETH",
+                "SOL/USDT": "SOL",
+                "MATIC/USDT": "MATIC",
+                "DOGE/USDT": "DOGE",
+                "PAXG/USDT": "PAXG",
+                "BNB/USDT": "BNB",
+            }
+            fsym = symbol_map.get(symbol)
+            if not fsym:
+                return None
+            
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # Get hourly OHLCV data (limit to 168 = 7 days)
+                response = await client.get(
+                    "https://min-api.cryptocompare.com/data/v2/histohour",
+                    params={"fsym": fsym, "tsym": "USD", "limit": min(limit, 168)}
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("Response") == "Success" and "Data" in data:
+                        ohlcv = data["Data"].get("Data", [])
+                        if ohlcv:
+                            df = pd.DataFrame(ohlcv)
+                            df = df.rename(columns={
+                                'time': 'timestamp',
+                                'volumefrom': 'volume'
+                            })
+                            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+                            logger.info(f"CryptoCompare: Got {len(df)} candles for {fsym}")
+                            return df
+                else:
+                    logger.warning(f"CryptoCompare API error: {response.status_code}")
+                return None
+                    
+        except Exception as e:
+            logger.warning(f"CryptoCompare fetch failed: {e}")
+            return None
+    
     async def _fetch_from_coingecko(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
-        """Fetch from CoinGecko API (no geo-restrictions)"""
+        """Fetch from CoinGecko API (may be rate limited)"""
         try:
             # Map symbol to CoinGecko ID
             coin_map = {
@@ -199,12 +251,16 @@ class TechnicalAnalyzer:
                 "ETH/USDT": "ethereum",
                 "BNB/USDT": "binancecoin",
                 "SOL/USDT": "solana",
-                "PAXG/USDT": "pax-gold"  # Gold-backed token
+                "MATIC/USDT": "matic-network",
+                "DOGE/USDT": "dogecoin",
+                "PAXG/USDT": "pax-gold"
             }
-            coin_id = coin_map.get(symbol, "bitcoin")
+            coin_id = coin_map.get(symbol)
+            if not coin_id:
+                return None
             
             async with httpx.AsyncClient(timeout=15.0) as client:
-                # Get OHLC data (1 day, 4h candles)
+                # Get OHLC data (7 days, 4h candles)
                 response = await client.get(
                     f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc",
                     params={"vs_currency": "usd", "days": "7"}

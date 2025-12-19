@@ -624,26 +624,52 @@ class TradingEngine:
         )
     
     async def _get_current_price(self, symbol: str) -> Optional[float]:
-        """Get current price from CoinGecko"""
+        """Get current price from CryptoCompare (primary) or CoinGecko (fallback)."""
+        crypto_compare_map = {
+            "SOL/USDT": "SOL",
+            "MATIC/USDT": "MATIC", 
+            "DOGE/USDT": "DOGE",
+            "BTC/USDT": "BTC",
+            "PAXG/USDT": "PAXG",
+            "ETH/USDT": "ETH",
+        }
+        coingecko_map = {
+            "SOL/USDT": "solana",
+            "MATIC/USDT": "matic-network",
+            "DOGE/USDT": "dogecoin",
+            "BTC/USDT": "bitcoin",
+            "PAXG/USDT": "pax-gold",
+            "ETH/USDT": "ethereum",
+        }
+        
         try:
-            coin_map = {
-                "SOL/USDT": "solana",
-                "MATIC/USDT": "matic-network",
-                "DOGE/USDT": "dogecoin",
-                "BTC/USDT": "bitcoin",
-                "PAXG/USDT": "pax-gold",
-                "ETH/USDT": "ethereum",
-            }
-            coin_id = coin_map.get(symbol, "bitcoin")
-            
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"https://api.coingecko.com/api/v3/simple/price",
-                    params={"ids": coin_id, "vs_currencies": "usd"}
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    return data.get(coin_id, {}).get('usd')
+                # Try CryptoCompare first (more generous rate limits)
+                cc_symbol = crypto_compare_map.get(symbol)
+                if cc_symbol:
+                    try:
+                        response = await client.get(
+                            "https://min-api.cryptocompare.com/data/price",
+                            params={"fsym": cc_symbol, "tsyms": "USD"}
+                        )
+                        if response.status_code == 200:
+                            data = response.json()
+                            price = data.get('USD')
+                            if price:
+                                return float(price)
+                    except Exception:
+                        pass
+                
+                # Fallback to CoinGecko
+                coin_id = coingecko_map.get(symbol)
+                if coin_id:
+                    response = await client.get(
+                        "https://api.coingecko.com/api/v3/simple/price",
+                        params={"ids": coin_id, "vs_currencies": "usd"}
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        return data.get(coin_id, {}).get('usd')
         except Exception as e:
             logger.error(f"Failed to get current price for {symbol}: {e}")
         return None
