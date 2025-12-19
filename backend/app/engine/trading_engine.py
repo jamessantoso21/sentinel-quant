@@ -47,6 +47,11 @@ DEFAULT_STOP_LOSS = 0.02
 DEFAULT_TAKE_PROFIT = 0.04
 POSITION_SIZE_PERCENT = 0.10  # 10% of capital per trade
 
+# Portfolio Rebalancing Mode
+# "monthly" = Equal weight monthly rebalancing (+3311% backtested)
+# "signal" = Original per-signal trading (default)
+REBALANCE_MODE = "monthly"  # Changed from "signal" to "monthly"
+
 
 def get_asset_settings(symbol: str) -> dict:
     """Get optimized settings for a specific asset"""
@@ -141,9 +146,14 @@ class TradingEngine:
             
         self.is_running = True
         logger.info(f"Trading engine started - Symbols: {self.symbols}")
+        logger.info(f"Rebalance Mode: {REBALANCE_MODE}")
         
         while self.is_running:
             try:
+                # Monthly Rebalance Mode
+                if REBALANCE_MODE == "monthly":
+                    await self._check_monthly_rebalance()
+                
                 # Cycle through all symbols
                 for symbol in self.symbols:
                     self.current_symbol = symbol
@@ -154,6 +164,65 @@ class TradingEngine:
             
             # Wait 5 minutes between full cycles
             await asyncio.sleep(290)  # 290 + 10*2 = 310 seconds total
+    
+    async def _check_monthly_rebalance(self):
+        """Check and execute monthly portfolio rebalance if needed"""
+        from api.v1.endpoints.bot import add_activity, bot_state
+        
+        try:
+            from engine.monthly_rebalance_engine import monthly_rebalance_engine
+            from engine.technical_analyzer import technical_analyzer
+            
+            # Get current prices for all coins
+            prices = {}
+            for symbol in TRADING_SYMBOLS:
+                price = await self._get_current_price(symbol)
+                if price:
+                    prices[symbol] = price
+            
+            if len(prices) < 5:
+                logger.warning("Not enough prices for rebalance check")
+                return
+            
+            # Initialize portfolio if first time
+            if not monthly_rebalance_engine.is_initialized:
+                # Get initial capital from settings or bot_state
+                initial_capital = bot_state.get("portfolio_capital", 62.0)  # Default $62 = 1 juta
+                monthly_rebalance_engine.initialize_portfolio(initial_capital, prices)
+                add_activity("PORTFOLIO_INIT", f"Initialized ${initial_capital:.2f} across {len(prices)} coins", traded=True)
+                logger.info(f"Portfolio initialized with ${initial_capital:.2f}")
+                return
+            
+            # Check if rebalance needed
+            result = monthly_rebalance_engine.check_rebalance_needed(prices)
+            
+            if result.should_rebalance:
+                add_activity("REBALANCE_CHECK", f"Rebalancing: {result.reason}", traded=False)
+                
+                # Execute rebalance
+                trades = monthly_rebalance_engine.execute_rebalance(result)
+                
+                for trade in trades:
+                    action = trade["action"]
+                    symbol = trade["symbol"].replace("/USDT", "")
+                    value = trade["value"]
+                    add_activity(
+                        f"REBALANCE_{action}",
+                        f"{symbol}: ${value:.2f} ({trade['reason']})",
+                        traded=True
+                    )
+                
+                # Update bot_state with portfolio info
+                status = monthly_rebalance_engine.get_portfolio_status(prices)
+                bot_state["portfolio_value"] = status["total_value"]
+                bot_state["last_rebalance"] = status["last_rebalance"]
+                
+                logger.info(f"Rebalance completed: {len(trades)} trades")
+            else:
+                logger.debug(f"No rebalance needed: {result.reason}")
+                
+        except Exception as e:
+            logger.error(f"Monthly rebalance error: {e}")
     
     def stop(self):
         """Stop the trading loop"""
