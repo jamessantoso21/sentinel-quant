@@ -30,9 +30,20 @@ async def get_live_prices(symbols: list[str]) -> dict:
         return {s: _price_cache.get(s, 0) for s in symbols}
     
     coin_map = {
+        # Core coins
         "BTC/USDT": "bitcoin",
-        "PAXG/USDT": "pax-gold",
         "ETH/USDT": "ethereum",
+        "PAXG/USDT": "pax-gold",
+        # 10 Trading coins
+        "SOL/USDT": "solana",
+        "MATIC/USDT": "matic-network",
+        "DOGE/USDT": "dogecoin",
+        "ADA/USDT": "cardano",
+        "FET/USDT": "fetch-ai",
+        "VET/USDT": "vechain",
+        "ETC/USDT": "ethereum-classic",
+        "HBAR/USDT": "hedera-hashgraph",
+        "AAVE/USDT": "aave",
     }
     
     coin_ids = [coin_map.get(s, "bitcoin") for s in symbols]
@@ -117,6 +128,9 @@ async def get_active_trades(current_user: CurrentUser, db: DbSession):
             "current_price": current_price,
             "unrealized_pnl": round(pnl_usdt, 2),
             "unrealized_pnl_percent": round(pnl_percent, 2),
+            # Aliases for frontend compatibility
+            "pnl": round(pnl_usdt, 2),
+            "pnl_percent": round(pnl_percent, 2),
             "stop_loss": trade.stop_loss,
             "take_profit": trade.take_profit,
             "created_at": trade.created_at.isoformat() if trade.created_at else None,
@@ -257,6 +271,53 @@ async def get_trade_summary(current_user: CurrentUser, db: DbSession):
         "unrealized_pnl_usdt": round(unrealized_pnl, 2),
         "total_pnl_usdt": round(total_pnl, 2),  # Combined
         "active_positions": len(open_trades)
+    }
+
+
+@router.get("/pnl-history")
+async def get_pnl_history(current_user: CurrentUser, db: DbSession, days: int = Query(30, ge=1, le=365)):
+    """Get PnL history for chart visualization"""
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+    
+    trade_repo = TradeRepository(db)
+    
+    # Get all completed trades in the date range
+    start_date = datetime.utcnow() - timedelta(days=days)
+    trades = await trade_repo.get_user_trades(user_id=current_user.id, limit=500)
+    
+    # Filter trades within date range and that are closed
+    closed_trades = [
+        t for t in trades 
+        if t.exit_price is not None and t.created_at and t.created_at >= start_date
+    ]
+    
+    # Sort by date
+    closed_trades.sort(key=lambda t: t.created_at)
+    
+    # Calculate cumulative PnL day by day
+    pnl_by_date = {}
+    for trade in closed_trades:
+        date_key = trade.created_at.strftime("%Y-%m-%d")
+        daily_pnl = (trade.pnl_usdt or 0)
+        pnl_by_date[date_key] = pnl_by_date.get(date_key, 0) + daily_pnl
+    
+    # Generate data points with cumulative sum
+    data = []
+    cumulative = 0
+    for date_key in sorted(pnl_by_date.keys()):
+        daily_pnl = pnl_by_date[date_key]
+        cumulative += daily_pnl
+        data.append({
+            "date": date_key,
+            "value": round(daily_pnl, 2),
+            "cumulative": round(cumulative, 2)
+        })
+    
+    return {
+        "data": data,
+        "total_pnl": round(cumulative, 2),
+        "days_covered": len(data)
     }
 
 
