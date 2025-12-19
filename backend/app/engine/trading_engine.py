@@ -14,22 +14,22 @@ from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Supported trading pairs
+# Supported trading pairs - Only trend-following coins that beat B&H
 TRADING_SYMBOLS = [
     "SOL/USDT",   # Solana - uses optimized Trend Following (+303% backtested)
     "MATIC/USDT", # Polygon - uses optimized Trend Following (+3084% backtested)
     "DOGE/USDT",  # Dogecoin - uses optimized Trend Following (+33723% backtested)
     "ADA/USDT",   # Cardano - uses optimized Trend Following (+1195% backtested)
-    "BTC/USDT",   # Bitcoin
-    "PAXG/USDT",  # Pax Gold (Gold-backed token)
+    # BTC removed: B&H (+1803%) beats all trend strategies (+61% to +157%)
+    # PAXG removed: Gold-backed token, not suitable for trend trading
 ]
 
-# Per-Asset TP/SL Configuration (from grid search optimization)
+# Per-Asset Configuration - All use trend engines
 ASSET_SETTINGS = {
     "SOL/USDT": {
         "stop_loss": None,       # Trend engine handles exits
         "take_profit": None,     # Trend engine handles exits
-        "use_trend_engine": True,  # Use optimized trend following
+        "use_trend_engine": True,  # Use optimized trend following (+303%)
     },
     "MATIC/USDT": {
         "stop_loss": None,       # Trend engine handles exits
@@ -45,16 +45,6 @@ ASSET_SETTINGS = {
         "stop_loss": None,       # Trend engine handles exits
         "take_profit": None,     # Trend engine handles exits  
         "use_trend_engine": True,  # Use optimized trend following (+1195%)
-    },
-    "BTC/USDT": {
-        "stop_loss": 0.02,       # 2% SL (from BTC backtest: 13.9% return)
-        "take_profit": 0.04,    # 4% TP
-        "consensus": 0.25,       # 25% consensus (1/4 voters)
-    },
-    "PAXG/USDT": {
-        "stop_loss": 0.01,       # 1% SL (from PAXG backtest: 9.05% return)
-        "take_profit": 0.015,   # 1.5% TP (tighter for gold)
-        "consensus": 0.25,       # 25% consensus (1/4 voters)
     },
 }
 
