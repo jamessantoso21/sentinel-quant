@@ -64,6 +64,13 @@ bot_state = {
     "btc_in_position": False,
     "btc_entry_price": None,
     "btc_pnl": None,
+    
+    # FET Trend Engine State (+368% optimized)
+    "fet_trend": None,
+    "fet_action": None,
+    "fet_in_position": False,
+    "fet_entry_price": None,
+    "fet_pnl": None,
 }
 
 
@@ -136,6 +143,15 @@ async def get_bot_activity(current_user: CurrentUser, limit: int = 20):
             "in_position": bot_state.get("btc_in_position", False),
             "entry_price": bot_state.get("btc_entry_price"),
             "pnl_percent": bot_state.get("btc_pnl"),
+        },
+        
+        # FET Trend Engine Status
+        "fet": {
+            "trend": bot_state.get("fet_trend"),
+            "action": bot_state.get("fet_action"),
+            "in_position": bot_state.get("fet_in_position", False),
+            "entry_price": bot_state.get("fet_entry_price"),
+            "pnl_percent": bot_state.get("fet_pnl"),
         }
     }
 

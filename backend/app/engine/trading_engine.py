@@ -20,6 +20,7 @@ TRADING_SYMBOLS = [
     "MATIC/USDT", # Polygon - uses optimized Trend Following (+3084% backtested)
     "DOGE/USDT",  # Dogecoin - uses optimized Trend Following (+33723% backtested)
     "ADA/USDT",   # Cardano - uses optimized Trend Following (+1195% backtested)
+    "FET/USDT",   # Fetch.AI - uses optimized Trend Following (+368% backtested)
     "BTC/USDT",   # Bitcoin - uses Market Timing (+7104% backtested)
     # PAXG removed: Gold-backed token, not suitable for trend trading
 ]
@@ -45,6 +46,11 @@ ASSET_SETTINGS = {
         "stop_loss": None,
         "take_profit": None,
         "use_trend_engine": True,  # Trend following (+1195%)
+    },
+    "FET/USDT": {
+        "stop_loss": None,
+        "take_profit": None,
+        "use_trend_engine": True,  # Trend following (+368%)
     },
     "BTC/USDT": {
         "stop_loss": None,
@@ -107,6 +113,12 @@ class TradingEngine:
         self.ada_in_position = False
         self._init_ada_engine()
         
+        # FET Trend Engine (+368% backtested)
+        self.fet_trend_engine = None
+        self.fet_entry_price = 0.0
+        self.fet_in_position = False
+        self._init_fet_engine()
+        
         # BTC Market Timing Engine (+7104% backtested)
         self.btc_timing_engine = None
         self.btc_entry_price = 0.0
@@ -161,6 +173,8 @@ class TradingEngine:
                 await self._doge_trend_cycle(add_activity, bot_state)
             elif self.current_symbol == "ADA/USDT":
                 await self._ada_trend_cycle(add_activity, bot_state)
+            elif self.current_symbol == "FET/USDT":
+                await self._fet_trend_cycle(add_activity, bot_state)
             return  # Trend coins use their own logic, skip consensus voting
         
         # ========== BTC: Use Market Timing Engine ==========
@@ -651,6 +665,7 @@ class TradingEngine:
             "MATIC/USDT": "MATIC", 
             "DOGE/USDT": "DOGE",
             "ADA/USDT": "ADA",
+            "FET/USDT": "FET",
             "BTC/USDT": "BTC",
             "PAXG/USDT": "PAXG",
             "ETH/USDT": "ETH",
@@ -660,6 +675,7 @@ class TradingEngine:
             "MATIC/USDT": "matic-network",
             "DOGE/USDT": "dogecoin",
             "ADA/USDT": "cardano",
+            "FET/USDT": "fetch-ai",
             "BTC/USDT": "bitcoin",
             "PAXG/USDT": "pax-gold",
             "ETH/USDT": "ethereum",
@@ -1073,6 +1089,80 @@ class TradingEngine:
                 pnl = (current_price - self.ada_entry_price) / self.ada_entry_price * 100
                 bot_state["ada_pnl"] = round(pnl, 2)
             logger.debug(f"ADA HOLD: {signal.reason}")
+    
+    def _init_fet_engine(self):
+        """Initialize FET Trend Engine"""
+        try:
+            from engine.fet_trend_engine import FETTrendEngine
+            self.fet_trend_engine = FETTrendEngine()
+            logger.info("FET Trend Engine initialized (+368% backtested)")
+        except ImportError as e:
+            logger.warning(f"Could not load FET Trend Engine: {e}")
+            self.fet_trend_engine = None
+    
+    async def _fet_trend_cycle(self, add_activity, bot_state):
+        """FET trading using optimized Trend Following strategy."""
+        from engine.technical_analyzer import technical_analyzer
+        
+        if not self.fet_trend_engine:
+            logger.warning("FET Trend Engine not available, skipping")
+            return
+        
+        current_price = await self._get_current_price("FET/USDT")
+        if not current_price:
+            add_activity("FET_TREND", "Could not get FET price", traded=False)
+            return
+        
+        technical = await technical_analyzer.analyze("FET/USDT")
+        
+        sma10 = technical.sma_10 if technical and hasattr(technical, 'sma_10') else current_price
+        sma20 = technical.sma_20 if technical and hasattr(technical, 'sma_20') else current_price
+        sma50 = technical.sma_50 if technical and hasattr(technical, 'sma_50') else current_price
+        rsi = technical.rsi if technical else 50
+        high_20d = current_price * 1.1
+        
+        self.fet_trend_engine.update_position(self.fet_entry_price, self.fet_in_position)
+        
+        signal = self.fet_trend_engine.get_signal(
+            current_price=current_price, sma10=sma10, sma20=sma20, sma50=sma50,
+            rsi=rsi, high_20d=high_20d, momentum_7d=0.0
+        )
+        
+        bot_state["fet_trend"] = signal.trend.value
+        bot_state["fet_action"] = signal.action.value
+        
+        pnl = 0
+        if signal.action.value == "BUY" and not self.fet_in_position:
+            add_activity("FET_BUY_SIGNAL", f"Trend: {signal.trend.value} | {signal.reason}", traded=False)
+            if TRADING_ENABLED:
+                self.fet_entry_price = current_price
+                self.fet_in_position = True
+                bot_state["fet_in_position"] = True
+                bot_state["fet_entry_price"] = current_price
+                await self._execute_trade("BUY", signal.confidence)
+                logger.info(f"FET BUY executed at ${current_price:.4f}: {signal.reason}")
+            else:
+                add_activity("FET_BUY_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        elif signal.action.value == "SELL" and self.fet_in_position:
+            pnl = (current_price - self.fet_entry_price) / self.fet_entry_price * 100
+            add_activity("FET_SELL_SIGNAL", f"PnL: {pnl:+.1f}% | {signal.reason}", traded=False)
+            if TRADING_ENABLED:
+                self.fet_entry_price = 0.0
+                self.fet_in_position = False
+                bot_state["fet_in_position"] = False
+                bot_state["fet_entry_price"] = None
+                bot_state["fet_pnl"] = None
+                if "FET/USDT" in self.positions:
+                    del self.positions["FET/USDT"]
+                await self._execute_trade("SELL", signal.confidence)
+                logger.info(f"FET SELL executed: {signal.reason} (PnL: {pnl:+.1f}%)")
+            else:
+                add_activity("FET_SELL_SKIPPED", f"Trading disabled: {signal.reason}", traded=False)
+        else:
+            if self.fet_in_position and self.fet_entry_price > 0:
+                pnl = (current_price - self.fet_entry_price) / self.fet_entry_price * 100
+                bot_state["fet_pnl"] = round(pnl, 2)
+            logger.debug(f"FET HOLD: {signal.reason}")
     
     def _init_btc_timing_engine(self):
         """Initialize BTC Market Timing Engine"""
