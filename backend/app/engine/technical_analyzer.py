@@ -77,7 +77,12 @@ class TechnicalAnalyzer:
             lower = sma - 2 * std
             
             current_price = df['close'].iloc[-1]
-            bb_position = (current_price - lower.iloc[-1]) / (upper.iloc[-1] - lower.iloc[-1])
+            bb_width = upper.iloc[-1] - lower.iloc[-1]
+            if bb_width > 0:
+                bb_position = (current_price - lower.iloc[-1]) / bb_width
+            else:
+                bb_position = 0.5  # Default to middle if no volatility
+                
             bb_position = max(0, min(1, bb_position))  # Clamp to 0-1
             
             if bb_position < self.bb_oversold:
